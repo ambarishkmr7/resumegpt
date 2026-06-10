@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
 
+    # Logging
+    LOG_LEVEL: str = "INFO"                 # DEBUG | INFO | WARNING | ERROR | CRITICAL
+
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"
 

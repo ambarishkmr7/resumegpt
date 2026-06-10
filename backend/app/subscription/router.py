@@ -1,6 +1,7 @@
 """Subscription + Razorpay payment gateway — Elite plan only (₹1,999)."""
 import hashlib
 import hmac
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,6 +14,7 @@ from app.core.deps import get_current_user
 from app.database import get_db
 from app.models import Subscription, Payment, User
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subscription", tags=["subscription"])
 settings = get_settings()
 
@@ -94,6 +96,7 @@ def create_order(payload: CreateOrderRequest,
     payment = Payment(user_id=user.id, razorpay_order_id=order["id"],
                       plan="elite", amount=PLAN["display"], status="created")
     db.add(payment); db.commit()
+    logger.info("Razorpay order created: %s (user=%s, amount=%s)", order["id"], user.id, PLAN["display"])
     return CreateOrderResponse(order_id=order["id"], amount=PLAN["amount"],
                                razorpay_key_id=settings.RAZORPAY_KEY_ID)
 
@@ -116,6 +119,8 @@ def verify_payment(payload: VerifyPaymentRequest,
             payment.status = "failed"
             payment.error_message = "Signature verification failed"
             db.commit()
+            logger.warning("Payment signature verification failed for order %s (user=%s)",
+                           payload.razorpay_order_id, user.id)
             raise HTTPException(status_code=400, detail="Payment verification failed")
 
     payment.razorpay_payment_id = payload.razorpay_payment_id
@@ -134,6 +139,8 @@ def verify_payment(payload: VerifyPaymentRequest,
             order_id=payload.razorpay_order_id)
         db.add(sub)
     db.commit(); db.refresh(sub)
+    logger.info("Payment verified — user %s subscribed to %s plan (payment=%s)",
+                user.id, sub.plan, payload.razorpay_payment_id)
     return SubscriptionStatus(is_subscribed=True, plan="elite", plan_name=PLAN["name"],
         amount=PLAN["display"], payment_id=sub.payment_id,
         created_at=sub.created_at.isoformat() if sub.created_at else None,

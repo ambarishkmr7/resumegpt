@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timedelta
 
@@ -23,6 +24,7 @@ from app.schemas import (
     UserOut,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
 
@@ -31,6 +33,7 @@ settings = get_settings()
 def register(payload: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
+        logger.warning("Registration failed — email already registered: %s", payload.email)
         raise HTTPException(status_code=400, detail="Email already registered")
     user = User(
         email=payload.email,
@@ -41,6 +44,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
     token = create_access_token(str(user.id))
+    logger.info("New user registered: %s (id=%s)", user.email, user.id)
     return Token(access_token=token, user=UserOut.model_validate(user))
 
 
@@ -49,8 +53,10 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
     # OAuth2PasswordRequestForm uses 'username' field; we treat it as email.
     user = db.query(User).filter(User.email == form.username).first()
     if not user or not verify_password(form.password, user.hashed_password):
+        logger.warning("Failed login attempt for email: %s", form.username)
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     token = create_access_token(user.id)
+    logger.info("User logged in: %s", user.email)
     return Token(access_token=token, user=UserOut.model_validate(user))
 
 
@@ -59,16 +65,19 @@ def login_json(payload: UserLogin, db: Session = Depends(get_db)):
     """Alternative JSON-based login (same as /login but accepts JSON body)."""
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
+        logger.warning("Failed JSON login attempt for email: %s", payload.email)
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     token = create_access_token(user.id)
+    logger.info("User logged in (JSON): %s", user.email)
     return Token(access_token=token, user=UserOut.model_validate(user))
 
 
 @router.post("/logout")
-def logout(_: User = Depends(get_current_user)):
+def logout(user: User = Depends(get_current_user)):
     # JWTs are stateless: the client discards the token. For server-side
     # revocation you would maintain a token blacklist / use short-lived tokens
     # plus refresh tokens. Endpoint exists so the frontend has a clean hook.
+    logger.info("User logged out: %s", user.email)
     return {"detail": "Logged out"}
 
 
@@ -83,9 +92,11 @@ def forgot_password(payload: ForgotPassword, db: Session = Depends(get_db)):
             minutes=settings.RESET_TOKEN_EXPIRE_MINUTES
         )
         db.commit()
+        logger.info("Password reset requested for: %s", user.email)
         # TODO: send `token` via email (SendGrid/SES). For dev we return it.
         reset_link = f"{settings.FRONTEND_ORIGIN}/reset-password?token={token}"
         return {"detail": "If the email exists, a reset link was sent", "dev_reset_link": reset_link}
+    logger.info("Password reset requested for unknown email: %s", payload.email)
     return {"detail": "If the email exists, a reset link was sent"}
 
 
@@ -97,6 +108,7 @@ def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
         or not user.reset_token_expires
         or user.reset_token_expires < datetime.utcnow()
     ):
+        logger.warning("Invalid or expired reset token used")
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
     user.hashed_password = hash_password(payload.new_password)
     user.reset_token = None
@@ -146,13 +158,17 @@ def google_login(payload: dict, db: Session = Depends(get_db)):
             db.add(user)
             db.commit()
             db.refresh(user)
+            logger.info("New user auto-registered via Google: %s", email)
+        logger.info("Google login: %s", email)
 
         access_token = create_access_token(user.id)
         return Token(access_token=access_token, user=UserOut.model_validate(user))
 
     except ValueError as e:
+        logger.warning("Invalid Google token: %s", e)
         raise HTTPException(status_code=401, detail=f"Invalid Google token: {str(e)}")
     except ImportError:
+        logger.error("Google auth library not installed")
         raise HTTPException(status_code=503, detail="Google auth library not installed")
 
 
@@ -175,6 +191,7 @@ def facebook_login(payload: dict, db: Session = Depends(get_db)):
             params={"fields": "id,name,email", "access_token": access_token},
         )
         if resp.status_code != 200:
+            logger.warning("Invalid Facebook token received")
             raise HTTPException(status_code=401, detail="Invalid Facebook token")
 
         fb_data = resp.json()
@@ -199,9 +216,12 @@ def facebook_login(payload: dict, db: Session = Depends(get_db)):
             db.add(user)
             db.commit()
             db.refresh(user)
+            logger.info("New user auto-registered via Facebook: %s", email)
 
+        logger.info("Facebook login: %s", email)
         token = create_access_token(user.id)
         return Token(access_token=token, user=UserOut.model_validate(user))
 
     except httpx.HTTPError as e:
+        logger.error("Facebook API error: %s", e)
         raise HTTPException(status_code=502, detail=f"Facebook API error: {str(e)}")

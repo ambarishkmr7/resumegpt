@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import os
 
 APP_DIR = os.path.dirname(__file__)
@@ -12,20 +13,26 @@ print("PUBLIC EXISTS =", os.path.exists(public_dir))
 if os.path.exists(public_dir):
     print("PUBLIC CONTENTS =", os.listdir(public_dir))
     
+=======
+import logging
+
+>>>>>>> 6154ba9 (implemented logging)
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 from app.auth.router import router as auth_router
 from app.config import get_settings
+from app.core.logging import setup_logging
 from app.database import Base, engine, SessionLocal
 from app.resumes.router import router as resumes_router
 from app.templates.router import router as templates_router
 from app.subscription.router import router as sub_router
 from app.admin.router import router as admin_router
-from app.public.router import router as public_router
+from app.public_routes.router import router as public_router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _seed_admin():
@@ -46,41 +53,44 @@ def _seed_admin():
             )
             db.add(user)
             db.commit()
-            print(f"[SEED] Admin user created: {settings.ADMIN_EMAIL}")
+            logger.info("Admin user created: %s", settings.ADMIN_EMAIL)
         elif not existing.is_admin:
             existing.is_admin = True
             db.commit()
-            print(f"[SEED] User {settings.ADMIN_EMAIL} promoted to admin")
+            logger.info("User promoted to admin: %s", settings.ADMIN_EMAIL)
     finally:
         db.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create tables + seed admin
+    # Startup
+    setup_logging(settings.LOG_LEVEL)
+    logger.info("ResumeGPT API starting up — log level: %s", settings.LOG_LEVEL)
+
     try:
         Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified successfully")
     except Exception as e:
         err = str(e)
         if "DatatypeMismatch" in err or "incompatible types" in err:
-            print("\n" + "=" * 70)
-            print("ERROR: Database tables exist with incompatible column types.")
-            print("This happens when another app created tables with INTEGER ids")
-            print("but ResumeGPT uses VARCHAR ids.")
-            print("")
-            print("FIX: Run the schema.sql script to recreate tables correctly:")
-            print("  psql -h localhost -p 5432 -U admin -d stocklens_db -f schema.sql")
-            print("=" * 70 + "\n")
+            logger.error(
+                "Database tables exist with incompatible column types. "
+                "Run schema.sql to recreate tables correctly. Error: %s", err
+            )
         else:
-            print(f"\n[STARTUP] Table creation failed: {err}")
-            print("If using PostgreSQL, run: psql ... -f schema.sql\n")
+            logger.error("Table creation failed: %s", err)
         # Don't crash — let the app start so the health endpoint works
+
     try:
         _seed_admin()
     except Exception as e:
-        print(f"[STARTUP] Admin seed skipped: {e}")
+        logger.warning("Admin seed skipped: %s", e)
+
+    logger.info("Startup complete — all routers mounted")
     yield
-    # Shutdown: nothing needed
+    # Shutdown
+    logger.info("ResumeGPT API shutting down")
 
 
 # ── Security headers middleware ────────────────────────────────────────────────

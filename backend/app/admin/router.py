@@ -1,15 +1,18 @@
 """Admin panel API — dashboard stats and CMS page management."""
+import logging
 from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.core.deps import get_current_user
 from app.database import get_db
 from app.models import User, Resume, Subscription, CmsPage, VisitorLog
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
@@ -17,6 +20,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 def require_admin(user: User = Depends(get_current_user)):
     if not user.is_admin:
+        logger.warning("Non-admin user %s attempted admin access", user.id)
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
@@ -138,6 +142,7 @@ def update_cms_page(slug: str, payload: CmsPageUpdate,
         page.icon = payload.icon
     db.commit()
     db.refresh(page)
+    logger.info("CMS page updated: %s (admin=%s)", slug, user.id)
     return CmsPageOut(id=page.id, slug=page.slug, title=page.title, content=page.content, icon=page.icon,
                       updated_at=page.updated_at.isoformat() if page.updated_at else None)
 

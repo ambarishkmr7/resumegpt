@@ -8,9 +8,13 @@ On quota/rate-limit errors (HTTP 429/529) the next provider is tried automatical
 Swap or extend providers without touching any other module.
 """
 import json
+import logging
+
 import httpx
+
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
@@ -111,39 +115,52 @@ def complete(prompt: str, system: str = "", max_tokens: int = 1500) -> str:
     # 1. Anthropic Claude
     if settings.ANTHROPIC_API_KEY:
         try:
+            logger.debug("Trying Anthropic Claude for AI completion")
             return _anthropic(prompt, system, max_tokens)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _QUOTA_CODES:
-                last_err = e  # quota exhausted → try next
+                logger.warning("Anthropic quota/rate-limit (HTTP %d) — falling back", e.response.status_code)
+                last_err = e
             else:
-                raise       # auth error, bad request etc. → bubble up
+                logger.error("Anthropic HTTP error (HTTP %d): %s", e.response.status_code, e)
+                raise
         except Exception as e:
+            logger.warning("Anthropic error: %s — falling back", e)
             last_err = e
 
     # 2. Google Gemini
     if settings.GEMINI_API_KEY:
         try:
+            logger.debug("Trying Google Gemini for AI completion")
             return _gemini(prompt, system, max_tokens)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _QUOTA_CODES:
+                logger.warning("Gemini quota/rate-limit (HTTP %d) — falling back", e.response.status_code)
                 last_err = e
             else:
+                logger.error("Gemini HTTP error (HTTP %d): %s", e.response.status_code, e)
                 raise
         except Exception as e:
+            logger.warning("Gemini error: %s — falling back", e)
             last_err = e
 
     # 3. xAI Grok
     if settings.GROK_API_KEY:
         try:
+            logger.debug("Trying xAI Grok for AI completion")
             return _grok(prompt, system, max_tokens)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _QUOTA_CODES:
+                logger.warning("Grok quota/rate-limit (HTTP %d) — falling back", e.response.status_code)
                 last_err = e
             else:
+                logger.error("Grok HTTP error (HTTP %d): %s", e.response.status_code, e)
                 raise
         except Exception as e:
+            logger.warning("Grok error: %s — falling back", e)
             last_err = e
 
+    logger.error("All AI providers exhausted. Last error: %s", last_err)
     raise RuntimeError(
         f"All AI providers exhausted. Last error: {last_err}. "
         "Set at least one of ANTHROPIC_API_KEY, GEMINI_API_KEY, or GROK_API_KEY in backend/.env"

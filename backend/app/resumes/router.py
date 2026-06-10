@@ -1,7 +1,9 @@
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from pathlib import Path
 
 from app.ai import services as ai_services
 from app.ai import client as ai_client
@@ -26,6 +28,7 @@ from app.schemas import (
     GenerateSampleRequest,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 settings = get_settings()
 storage = StorageService(settings)
@@ -50,6 +53,7 @@ def create_resume(payload: ResumeCreate, user: User = Depends(get_current_user),
                content=payload.content.model_dump())
     r.ats_score = ats_engine.score_resume(payload.content).score
     db.add(r); db.commit(); db.refresh(r)
+    logger.info("Resume created: %s (user=%s, ats=%s)", r.title, user.id, r.ats_score)
     return r
 
 
@@ -70,6 +74,7 @@ def update_resume(resume_id: str, payload: ResumeUpdate,
         r.content = payload.content.model_dump()
         r.ats_score = ats_engine.score_resume(payload.content).score
     db.commit(); db.refresh(r)
+    logger.info("Resume updated: %s (user=%s)", r.id, user.id)
     return r
 
 
@@ -78,6 +83,7 @@ def delete_resume(resume_id: str, user: User = Depends(get_current_user), db: Se
     r = _get_owned(resume_id, user, db)
     storage_key = r.storage_key
     db.delete(r); db.commit()
+    logger.info("Resume deleted: %s (user=%s)", resume_id, user.id)
     # Clean up the stored file (best-effort; don't fail the request).
     if storage_key:
         storage.delete_object(storage_key)
@@ -139,8 +145,10 @@ async def upload_resume(
         r.storage_key = storage.upload_bytes(data, key, content_type=content_type)
         db.commit(); db.refresh(r)
     except Exception:
-        pass  # file storage is best-effort; parsing result is already saved
+        logger.warning("Failed to persist original file for resume %s", r.id, exc_info=True)
 
+    logger.info("Resume uploaded: %s (user=%s, file=%s, size=%d bytes, ats=%s)",
+                r.id, user.id, file.filename, len(data), r.ats_score)
     return r
 
 
@@ -342,6 +350,7 @@ async def upload_photo(
     mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
             "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/jpeg")
     b64 = base64.b64encode(data).decode()
+    logger.info("Photo uploaded for user %s (size=%d bytes)", user.id, len(data))
     return {"data_url": f"data:{mime};base64,{b64}"}
 
 
@@ -364,13 +373,17 @@ def get_original(resume_id: str,
                 break
 
     if not key:
+        logger.warning("No storage key for resume %s original file", resume_id)
         raise HTTPException(status_code=404, detail="Original file not stored for this resume")
 
     try:
         data = storage.download_bytes(key)
     except Exception:
+        logger.warning("Failed to download original file for resume %s (key=%s)", resume_id, key)
         raise HTTPException(status_code=404, detail="Original file not found in storage")
 
+    logger.info("Serving original file for resume %s (user=%s, key=%s, size=%d)",
+                resume_id, user.id, key, len(data))
     ext = Path(key).suffix.lower()
     media = "application/pdf" if ext == ".pdf" else (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -390,6 +403,7 @@ def download(resume_id: str, fmt: str = "pdf",
     from app.models import Subscription
     sub = db.query(Subscription).filter(Subscription.user_id == user.id, Subscription.status == "active").first()
     if not sub:
+        logger.warning("Download denied — no active subscription for user %s", user.id)
         raise HTTPException(status_code=402, detail="Subscription required. One-time payment of ₹299 for lifetime access.")
     r = _get_owned(resume_id, user, db)
     content = ResumeContent.model_validate(r.content)
@@ -402,6 +416,7 @@ def download(resume_id: str, fmt: str = "pdf",
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; ext = "docx"
     else:
         raise HTTPException(status_code=400, detail="fmt must be 'pdf' or 'docx'")
+    logger.info("Resume downloaded: %s (user=%s, fmt=%s)", resume_id, user.id, fmt)
     return StreamingResponse(
         iter([data]), media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{safe}.{ext}"'},

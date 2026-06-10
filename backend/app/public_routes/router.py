@@ -1,5 +1,7 @@
+import logging
 import re
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
@@ -7,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_db
 from app.models import ContactMessage
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/public", tags=["public"])
 
 EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -126,6 +129,7 @@ def submit_contact(payload: ContactIn, request: Request, db: Session = Depends(g
     )
     db.add(msg)
     db.commit()
+    logger.info("Contact message received from %s (%s)", payload.name, payload.email)
     return {"ok": True, "message": "Thank you! We'll get back to you within 24 hours."}
 
 
@@ -146,4 +150,5 @@ def submit_feedback(payload: FeedbackIn, request: Request, db: Session = Depends
     )
     db.add(msg)
     db.commit()
+    logger.info("Feedback received from %s (rating=%d)", payload.email, payload.rating)
     return {"ok": True, "message": "Thank you for your feedback! It helps us improve."}
