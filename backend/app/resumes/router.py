@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-import os
 from pathlib import Path
 
 from app.ai import services as ai_services
@@ -13,6 +12,7 @@ from app.models import Resume, User
 from app.resumes import ats as ats_engine
 from app.resumes import generator
 from app.resumes import parser
+from app.storage import StorageService
 from app.schemas import (
     ATSRequest, ATSResult, CoverLetterRequest, CoverLetterResponse,
     ResumeContent, ResumeCreate, ResumeOut, ResumeUpdate,
@@ -28,6 +28,7 @@ from app.schemas import (
 
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 settings = get_settings()
+storage = StorageService(settings)
 
 
 def _get_owned(resume_id: str, user: User, db: Session) -> Resume:
@@ -75,7 +76,11 @@ def update_resume(resume_id: str, payload: ResumeUpdate,
 @router.delete("/{resume_id}", status_code=204)
 def delete_resume(resume_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     r = _get_owned(resume_id, user, db)
+    storage_key = r.storage_key
     db.delete(r); db.commit()
+    # Clean up the stored file (best-effort; don't fail the request).
+    if storage_key:
+        storage.delete_object(storage_key)
 
 
 # ---------- Upload + parse ----------
@@ -124,13 +129,15 @@ async def upload_resume(
     r.ats_score = ats_engine.score_resume(content).score
     db.add(r); db.commit(); db.refresh(r)
 
-    # Persist the original file so we can serve it back for "show as uploaded".
+    # Persist the original file to cloud/local storage so we can serve it back.
     try:
-        uploads_dir = Path(settings.STORAGE_DIR) / "uploads"
-        uploads_dir.mkdir(parents=True, exist_ok=True)
         ext = Path(file.filename or "file").suffix.lower() or ".pdf"
-        orig_path = uploads_dir / f"{r.id}{ext}"
-        orig_path.write_bytes(data)
+        content_type = "application/pdf" if ext == ".pdf" else (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        key = f"uploads/{r.id}{ext}"
+        r.storage_key = storage.upload_bytes(data, key, content_type=content_type)
+        db.commit(); db.refresh(r)
     except Exception:
         pass  # file storage is best-effort; parsing result is already saved
 
@@ -346,17 +353,32 @@ def get_original(resume_id: str,
     """Serve the originally-uploaded file (PDF or DOCX) so the UI can display
     the resume 'as it was uploaded' before any parsing/restyling."""
     r = _get_owned(resume_id, user, db)
-    uploads_dir = Path(settings.STORAGE_DIR) / "uploads"
-    # Try common extensions.
-    for ext in (".pdf", ".docx"):
-        path = uploads_dir / f"{r.id}{ext}"
-        if path.exists():
-            media = "application/pdf" if ext == ".pdf" else (
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-            return FileResponse(path, media_type=media,
-                                filename=r.original_filename or f"resume{ext}")
-    raise HTTPException(status_code=404, detail="Original file not stored for this resume")
+
+    # Determine the storage key: use saved key or fall back to legacy path lookup.
+    key = r.storage_key
+    if not key:
+        uploads_dir = Path(settings.STORAGE_DIR) / "uploads"
+        for ext in (".pdf", ".docx"):
+            if (uploads_dir / f"{r.id}{ext}").exists():
+                key = f"uploads/{r.id}{ext}"
+                break
+
+    if not key:
+        raise HTTPException(status_code=404, detail="Original file not stored for this resume")
+
+    try:
+        data = storage.download_bytes(key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Original file not found in storage")
+
+    ext = Path(key).suffix.lower()
+    media = "application/pdf" if ext == ".pdf" else (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return StreamingResponse(
+        iter([data]), media_type=media,
+        headers={"Content-Disposition": f'inline; filename="{r.original_filename or f"resume{ext}"}"'},
+    )
 
 
 # ---------- Download (subscription-gated) ----------
