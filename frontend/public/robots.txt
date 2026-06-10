@@ -1,0 +1,32 @@
+User-agent: *
+Allow: /
+Allow: /login
+Allow: /register
+Allow: /page/about-us
+Allow: /page/privacy-policy
+Allow: /page/terms-of-service
+Allow: /page/faq
+Allow: /page/contact-us
+Allow: /page/feedback
+Allow: /page/blog
+Allow: /sitemap.html
+
+# Protect app routes from indexing
+Disallow: /editor/
+Disallow: /admin/
+Disallow: /api/
+
+# Block bad bots
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+Sitemap: https://www.resumegpt.in/sitemap.xml

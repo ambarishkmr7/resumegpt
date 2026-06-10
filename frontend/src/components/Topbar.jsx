@@ -1,0 +1,29 @@
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext.jsx";
+
+export default function Topbar() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
+  };
+
+  return (
+    <nav className="topbar">
+      <Link to="/" className="topbar-brand">
+        <img src="/logo.png" alt="ResumeGPT" className="topbar-logo" />
+        <span>ResumeGPT</span>
+      </Link>
+      <div className="spacer" />
+      {user && (
+        <>
+          {user.is_admin && <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>}
+          <span className="topbar-user">{user.full_name || user.email}</span>
+          <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Logout</button>
+        </>
+      )}
+    </nav>
+  );
+}
