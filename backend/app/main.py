@@ -12,7 +12,6 @@ print("PUBLIC EXISTS =", os.path.exists(public_dir))
 if os.path.exists(public_dir):
     print("PUBLIC CONTENTS =", os.listdir(public_dir))
     
-=======
 import logging
 
 from fastapi import FastAPI, Request, Response
