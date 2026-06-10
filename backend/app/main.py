@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import os
 
 APP_DIR = os.path.dirname(__file__)
@@ -16,7 +15,6 @@ if os.path.exists(public_dir):
 =======
 import logging
 
->>>>>>> 6154ba9 (implemented logging)
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
