@@ -1,3 +1,17 @@
+import os
+
+APP_DIR = os.path.dirname(__file__)
+
+print("APP_DIR =", APP_DIR)
+print("APP CONTENTS =", os.listdir(APP_DIR))
+
+public_dir = os.path.join(APP_DIR, "public")
+
+print("PUBLIC EXISTS =", os.path.exists(public_dir))
+
+if os.path.exists(public_dir):
+    print("PUBLIC CONTENTS =", os.listdir(public_dir))
+    
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
