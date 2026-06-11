@@ -1,11 +1,52 @@
 """AI-powered features. Each function degrades gracefully when no API key is
 set, so the app remains fully usable (just without the AI niceties)."""
 import json
+import logging
 import re
 
 from app.ai import client
 from app.schemas import ResumeContent
 from app.resumes.ats import score_resume
+logger = logging.getLogger(__name__)
+
+
+# ── New Gemini SDK client (replaces old REST-based client for structured output) ──
+
+def _gemini_client():
+    """Create a google-genai Client from settings."""
+    from google import genai
+    from app.config import get_settings
+    api_key = get_settings().GEMINI_API_KEY
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+    return genai.Client(api_key=api_key)
+
+
+def _gemini_complete_json(prompt: str, system: str = "", max_tokens: int = 2000) -> dict:
+    """Send a prompt to Gemini 2.5 Flash and parse JSON response."""
+    from google.genai import types
+    client = _gemini_client()
+    system_instruction = system if system else None
+    response = client.models.generate_content(
+        model="gemini-flash-lite-latest",
+        contents=[prompt],
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            max_output_tokens=max_tokens,
+            temperature=0.7,
+        ),
+    )
+    text = response.text.strip()
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.startswith("json"):
+            text = text[4:]
+    text = text.strip().strip("`").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1:
+        text = text[start:end + 1]
+    return json.loads(text)
 
 
 # ---------------- Cover letter ----------------
@@ -80,290 +121,145 @@ def suggest_improvements(content: ResumeContent, job_description=None):
         return content, [f"AI suggestion failed ({e}); returned original content."]
 
 
-# ---------------- AI-assisted parsing ----------------
-
-def ai_parse(raw_text: str) -> ResumeContent:
-    """More robust than the heuristic parser for messy resumes."""
-    system = "You extract structured data from resume text. Output strict JSON only."
-    schema_hint = ResumeContent().model_dump()
-    prompt = (
-        "Extract this resume text into JSON matching exactly this schema "
-        f"(same keys, same nesting):\n{json.dumps(schema_hint)}\n\n"
-        f"RESUME TEXT:\n{raw_text[:12000]}\n\n"
-        "Map work history to 'experience' with bullets as a string array. "
-        "Do not invent data. Return only the JSON object."
-    )
-    data = client.complete_json(prompt, system=system, max_tokens=3000)
-    return ResumeContent.model_validate(data)
-
-
 # ---------------- Career analysis ----------------
 
 def analyze_career(content: ResumeContent, job_description=None) -> dict:
+    """Analyze a resume and return strengths, weaknesses, recommendations, and overall assessment."""
+    result = score_resume(content, job_description)
+    total_bullets = sum(len(e.bullets) for e in content.experience)
+    quantified = sum(1 for e in content.experience for b in e.bullets if re.search(r'\d+[%$KMkm]|\d{2,}', b))
+
     if not client.available():
-        result = score_resume(content, job_description)
+        # Deterministic fallback when no AI key is configured
         strengths, weaknesses, recs = [], [], []
-
-        # Deep resume scanning
-        total_bullets = sum(len(e.bullets) for e in content.experience)
-        quantified = sum(1 for e in content.experience for b in e.bullets if re.search(r'\d+[%$KMkm]|\d{2,}', b))
-        action_verbs = sum(1 for e in content.experience for b in e.bullets
-                          if b.strip() and b.strip().split()[0].lower() in {
-                              "led","built","designed","implemented","managed","reduced",
-                              "increased","achieved","launched","developed","improved","created"})
-        exp_years = len(content.experience) * 2
-
-        # Strengths
         if content.experience:
-            strengths.append(f"Demonstrates {len(content.experience)} role(s) spanning ~{exp_years}+ years of professional experience.")
+            strengths.append(f"Demonstrates {len(content.experience)} role(s) of professional experience.")
         if quantified > 2:
-            strengths.append(f"{quantified} bullet points include quantified achievements (numbers, %, $) — strong impact evidence.")
-        if action_verbs > 3:
-            strengths.append(f"{action_verbs} bullets start with strong action verbs — shows initiative and ownership.")
+            strengths.append(f"{quantified} bullet points include quantified achievements (numbers, %, $).")
         if content.skills and len(content.skills) >= 5:
             strengths.append(f"Comprehensive skills section with {len(content.skills)} technologies listed.")
         if content.certifications:
             strengths.append(f"Holds {len(content.certifications)} certification(s) validating expertise.")
-        if content.projects:
-            strengths.append(f"{len(content.projects)} project(s) demonstrate hands-on initiative beyond job duties.")
-        if content.languages and len(content.languages) >= 2:
-            strengths.append(f"Multilingual ({', '.join(content.languages[:3])}) — valuable in global teams.")
-        if content.summary and len(content.summary.split()) >= 15:
-            strengths.append("Well-crafted professional summary provides clear positioning.")
-
-        # Weaknesses
-        if not content.summary or len(content.summary.split()) < 10:
-            weaknesses.append("Professional summary is missing or too brief — recruiters spend 6 seconds here.")
+        if not content.summary:
+            weaknesses.append("Professional summary is missing or too brief.")
         if total_bullets > 0 and quantified == 0:
             weaknesses.append("No quantified achievements found. Numbers make bullets 40% more impactful.")
-        if total_bullets > 0 and quantified < total_bullets * 0.3:
-            weaknesses.append(f"Only {quantified}/{total_bullets} bullets are quantified. Aim for 50%+.")
         if not content.certifications:
             weaknesses.append("No certifications listed — they validate skills and boost ATS scores.")
-        if not content.projects:
-            weaknesses.append("No projects section — side projects demonstrate passion and initiative.")
-        if total_bullets < len(content.experience) * 3:
-            weaknesses.append(f"Average {total_bullets/max(len(content.experience),1):.0f} bullets per role. Aim for 4-6 per role.")
-        for issue in result.issues:
-            if issue.severity == "critical":
-                weaknesses.append(issue.message)
-        if result.missing_keywords:
-            weaknesses.append(f"Missing keywords for target job: {', '.join(result.missing_keywords[:5])}")
-
-        # Recommendations
         for issue in result.issues:
             recs.append(issue.suggestion)
-        if quantified < total_bullets * 0.5:
-            recs.append("Add metrics to more bullet points: revenue impact ($), efficiency gains (%), scale (users/requests).")
-        if not content.contact.linkedin:
-            recs.append("Add your LinkedIn URL — 80% of recruiters check it before shortlisting.")
-        if not content.certifications:
-            recs.append("Earn at least one industry certification relevant to your role (AWS, GCP, PMP, etc.).")
-        if len(content.skills) < 8:
-            recs.append("Expand your skills section — include frameworks, tools, and methodologies, not just languages.")
         recs.append("Tailor your resume for each application: match keywords from the job description.")
-
-        # Skill gap analysis
-        skill_categories = {"cloud": False, "database": False, "ci_cd": False, "testing": False, "leadership": False}
-        skills_lower = [s.lower() for s in content.skills]
-        if any(s in " ".join(skills_lower) for s in ["aws","gcp","azure","cloud"]): skill_categories["cloud"] = True
-        if any(s in " ".join(skills_lower) for s in ["sql","postgres","mongo","redis","database"]): skill_categories["database"] = True
-        if any(s in " ".join(skills_lower) for s in ["ci/cd","jenkins","github actions","gitlab","docker"]): skill_categories["ci_cd"] = True
-        gaps = [k.replace("_"," ").title() for k,v in skill_categories.items() if not v]
-
-        # Advanced scanning metrics
-        all_text = content.summary + " " + " ".join(b for e in content.experience for b in e.bullets)
-        word_count = len(all_text.split())
-        avg_bullet_len = sum(len(b.split()) for e in content.experience for b in e.bullets) / max(total_bullets, 1)
-        weak_phrases = sum(1 for b in (b for e in content.experience for b in e.bullets)
-                          if re.search(r'\b(responsible for|helped|assisted|worked on|involved in|duties included)\b', b, re.I))
-        has_career_growth = len(content.experience) >= 2 and any(
-            any(w in (content.experience[0].title or "").lower() for w in ["senior","lead","principal","manager","director","head","vp","staff"])
-            for _ in [1])
-
-        # Readability & completeness scores
-        completeness = sum(1 for x in [content.summary, content.experience, content.skills,
-                                        content.education, content.certifications, content.projects,
-                                        content.accomplishments, content.languages] if x)
-        completeness_pct = int(completeness / 8 * 100)
-        impact_score = int(quantified / max(total_bullets, 1) * 100)
-
-        # Additional deep insights
-        if weak_phrases > 0:
-            weaknesses.append(f"{weak_phrases} bullet(s) use weak/passive phrases ('responsible for', 'helped'). Replace with strong action verbs.")
-        if avg_bullet_len > 25:
-            weaknesses.append(f"Average bullet length is {avg_bullet_len:.0f} words — aim for 15-20 words for readability.")
-        if avg_bullet_len < 8 and total_bullets > 0:
-            weaknesses.append(f"Average bullet length is only {avg_bullet_len:.0f} words — too brief, add context and impact.")
-        if has_career_growth:
-            strengths.append("Career trajectory shows growth — progressed to senior/leadership positions.")
-        if content.accomplishments:
-            strengths.append(f"{len(content.accomplishments)} accomplishment(s) listed — demonstrates recognition and results.")
-        if word_count > 800:
-            recs.insert(0, f"Resume is {word_count} words — consider trimming to 400-600 for a single-page impact.")
-
         return dict(
-            strengths=strengths[:8] or ["Resume has basic sections filled."],
-            weaknesses=weaknesses[:8] or ["No critical issues detected."],
-            recommendations=recs[:12],
-            overall_assessment=(
-                f"ATS Score: {result.score}/100. "
-                f"{'Excellent' if result.score >= 85 else 'Good' if result.score >= 70 else 'Needs work'} resume. "
-                f"Impact evidence: {quantified}/{total_bullets} quantified bullets ({impact_score}% impact rate). "
-                f"{'Weak phrases detected — ' + str(weak_phrases) + ' passive bullets need rewriting. ' if weak_phrases else ''}"
-                f"{'Strong skill gaps detected in: ' + ', '.join(gaps) + '. ' if gaps else 'Skills coverage looks solid. '}"
-                f"Resume completeness: {completeness_pct}% ({completeness}/8 key sections populated). "
-                f"{'Career trajectory shows upward growth. ' if has_career_growth else 'Consider highlighting career progression. '}"
-                f"Average bullet length: {avg_bullet_len:.0f} words."
-                + " [Set ANTHROPIC_API_KEY for AI-powered deep analysis.]"
-            ),
+            strengths=strengths[:6] or ["Resume has basic sections filled."],
+            weaknesses=weaknesses[:6] or ["No critical issues detected."],
+            recommendations=recs[:8],
+            overall_assessment=f"ATS Score: {result.score}/100. {'Excellent' if result.score >= 85 else 'Good' if result.score >= 70 else 'Needs work'} resume. Impact evidence: {quantified}/{total_bullets} quantified bullets.",
         )
 
+    # LLM-powered analysis with structured JSON output
     system = (
-        "You are a senior career coach, hiring manager, and ATS expert with 15+ years experience. "
-        "Analyze the resume deeply: scan for impact evidence (metrics, numbers), action verbs, "
-        "skill gaps relative to market demand, career progression trajectory, and personal branding. "
-        "Provide specific, actionable insights — not generic advice."
+        "You are a senior career coach, hiring manager, and ATS expert with 15+ years of experience. "
+        "Analyze the resume deeply and provide specific, actionable insights — not generic advice. "
+        "Reference specific details from the resume in your analysis."
     )
     prompt = (
-        "Deeply analyze this resume. Scan for:\n"
+        "Deeply analyze this resume. Evaluate:\n"
         "- Quantified achievements vs vague statements\n"
         "- Action verb usage and impact language\n"
         "- Skill gaps relative to current market demand\n"
         "- Career progression (title growth, scope increase)\n"
         "- Personal branding consistency\n"
         "- ATS optimization opportunities\n\n"
-        "Provide:\n"
-        "1. strengths (5-6 specific things done well, with evidence from the resume)\n"
-        "2. weaknesses (5-6 specific gaps, with concrete examples from the resume)\n"
-        "3. recommendations (8-10 specific actionable steps, prioritized by impact)\n"
-        "4. overall_assessment (2-3 paragraph thorough assessment with market context)\n\n"
-        f"JOB DESCRIPTION (if targeting):\n{job_description or 'General analysis'}\n\n"
-        f"RESUME:\n{content.model_dump_json(indent=2)}\n\n"
-        'Return ONLY JSON: {"strengths":[],"weaknesses":[],"recommendations":[],"overall_assessment":""}'
+        "Return a JSON object with these exact keys:\n"
+        "- strengths: array of 5-6 strings (specific things done well, with evidence)\n"
+        "- weaknesses: array of 5-6 strings (specific gaps with examples)\n"
+        "- recommendations: array of 8-10 strings (actionable steps, prioritized)\n"
+        "- overall_assessment: string (2-3 paragraph thorough assessment)\n\n"
+        f"JOB DESCRIPTION (optional):\n{job_description or 'General analysis'}\n\n"
+        f"RESUME JSON:\n{content.model_dump_json(indent=2)}\n\n"
+        "Return ONLY the JSON object, no markdown or extra text."
     )
     try:
-        return client.complete_json(prompt, system=system, max_tokens=2500)
-    except Exception:
-        return analyze_career(ResumeContent(), None)
+        data = _gemini_complete_json(prompt, system=system, max_tokens=2500)
+        return dict(
+            strengths=data.get("strengths", [])[:8],
+            weaknesses=data.get("weaknesses", [])[:8],
+            recommendations=data.get("recommendations", [])[:12],
+            overall_assessment=data.get("overall_assessment", ""),
+        )
+    except Exception as e:
+        logger.warning("AI career analysis failed: %s, using deterministic fallback", e)
+        # Return deterministic fallback
+        return _deterministic_analysis(content, job_description, result, total_bullets, quantified)
+
+
+def _deterministic_analysis(content, job_description, result, total_bullets, quantified):
+    """Deterministic fallback for career analysis when AI is unavailable."""
+    strengths, weaknesses, recs = [], [], []
+    if content.experience:
+        strengths.append(f"Demonstrates {len(content.experience)} role(s) of professional experience.")
+    if quantified > 2:
+        strengths.append(f"{quantified} bullet points include quantified achievements (numbers, %, $).")
+    if content.skills and len(content.skills) >= 5:
+        strengths.append(f"Comprehensive skills section with {len(content.skills)} technologies listed.")
+    if content.certifications:
+        strengths.append(f"Holds {len(content.certifications)} certification(s) validating expertise.")
+    if not content.summary:
+        weaknesses.append("Professional summary is missing or too brief.")
+    if total_bullets > 0 and quantified == 0:
+        weaknesses.append("No quantified achievements found. Numbers make bullets 40% more impactful.")
+    if not content.certifications:
+        weaknesses.append("No certifications listed — they validate skills and boost ATS scores.")
+    for issue in result.issues:
+        recs.append(issue.suggestion)
+    recs.append("Tailor your resume for each application: match keywords from the job description.")
+    return dict(
+        strengths=strengths[:6] or ["Resume has basic sections filled."],
+        weaknesses=weaknesses[:6] or ["No critical issues detected."],
+        recommendations=recs[:8],
+        overall_assessment=(
+            f"ATS Score: {result.score}/100. "
+            f"{'Excellent' if result.score >= 85 else 'Good' if result.score >= 70 else 'Needs work'} resume. "
+            f"Impact evidence: {quantified}/{total_bullets} quantified bullets."
+        ),
+    )
+
+
+def _deterministic_roadmap(content, current_title):
+    """Deterministic fallback for career roadmap when AI is unavailable."""
+    from urllib.parse import quote_plus
+    skill_query = quote_plus(current_title)
+    return dict(
+        current_level=current_title,
+        next_roles=[f"Senior {current_title}", f"Lead {current_title}", f"Staff {current_title}"],
+        roadmap_steps=[
+            "Deepen expertise in 1-2 core technologies.",
+            "Take on cross-functional or leadership projects.",
+            "Earn relevant industry certifications.",
+            "Build a portfolio of measurable achievements.",
+            "Network and seek mentorship in target domain.",
+        ],
+        recommended_certifications=[],
+        skill_gaps=["Leadership and mentorship", "System design at scale", "Cross-team communication"],
+        timeline="12-24 months for next-level transition.",
+        youtube_channels=[],
+        learning_resources=[
+            dict(platform="Coursera", url=f"https://www.coursera.org/search?query={skill_query}", description="University-level courses"),
+            dict(platform="Udemy", url=f"https://www.udemy.com/courses/search/?q={skill_query}", description="Affordable practical courses"),
+        ],
+    )
 
 
 # ---------------- Career roadmap ----------------
 
 def career_roadmap(content: ResumeContent, target_role=None) -> dict:
+    """Generate a career roadmap with certifications, skill gaps, and learning resources."""
     current_title = content.contact.title or (content.experience[0].title if content.experience else "Professional")
+
     if not client.available():
-        certs = []
-        skills = [s.lower() for s in content.skills]
-        skills_text = " ".join(skills)
-        bullets_text = " ".join(b.lower() for e in content.experience for b in e.bullets)
-        all_text = skills_text + " " + bullets_text
-
-        # Cloud certifications
-        if "aws" not in skills_text:
-            certs.append(dict(name="AWS Solutions Architect Associate",
-                institution="Amazon Web Services (AWS)", description="Industry-standard cloud architecture certification.",
-                udemy_url="https://www.udemy.com/course/aws-certified-solutions-architect-associate-saa-c03/"))
-        if "azure" not in skills_text and "gcp" not in skills_text:
-            certs.append(dict(name="Google Cloud Professional Cloud Architect",
-                institution="Google Cloud", description="Design and manage GCP solutions at enterprise scale.",
-                udemy_url="https://www.udemy.com/course/google-cloud-professional-cloud-architect-certification/"))
-        if "azure" not in skills_text:
-            certs.append(dict(name="Microsoft Azure Fundamentals (AZ-900)",
-                institution="Microsoft", description="Entry-level cloud certification for Azure services.",
-                udemy_url="https://www.udemy.com/course/az900-azure/"))
-
-        # DevOps & Container
-        if "kubernetes" not in skills_text:
-            certs.append(dict(name="Certified Kubernetes Administrator (CKA)",
-                institution="Cloud Native Computing Foundation (CNCF)", description="Kubernetes cluster management and orchestration.",
-                udemy_url="https://www.udemy.com/course/certified-kubernetes-administrator-with-practice-tests/"))
-        if "docker" not in skills_text and "devops" not in skills_text:
-            certs.append(dict(name="Docker Certified Associate (DCA)",
-                institution="Mirantis (Docker Inc.)", description="Container orchestration and Docker ecosystem.",
-                udemy_url="https://www.udemy.com/course/docker-certified-associate/"))
-        if "terraform" not in skills_text:
-            certs.append(dict(name="HashiCorp Terraform Associate",
-                institution="HashiCorp", description="Infrastructure as Code with Terraform.",
-                udemy_url="https://www.udemy.com/course/terraform-beginner-to-advanced/"))
-
-        # Data & ML
-        if any(s in skills_text for s in ["python", "data", "ml", "machine learning", "tensorflow", "pytorch"]):
-            if "tensorflow" not in skills_text:
-                certs.append(dict(name="TensorFlow Developer Certificate",
-                    institution="Google / TensorFlow", description="ML model building with TensorFlow.",
-                    udemy_url="https://www.udemy.com/course/tensorflow-developer-certificate-machine-learning-zero-to-mastery/"))
-            certs.append(dict(name="AWS Machine Learning Specialty",
-                institution="Amazon Web Services (AWS)", description="Design and deploy ML solutions on AWS.",
-                udemy_url="https://www.udemy.com/course/aws-machine-learning/"))
-
-        # Security
-        if "security" in all_text or "cybersecurity" in all_text:
-            certs.append(dict(name="CompTIA Security+",
-                institution="CompTIA", description="Foundational cybersecurity certification.",
-                udemy_url="https://www.udemy.com/course/comptia-security-certification-sy0-701-the-total-course/"))
-
-        # Management
-        if not any("pmp" in s for s in skills):
-            certs.append(dict(name="PMP (Project Management Professional)",
-                institution="Project Management Institute (PMI)", description="Gold-standard project management certification.",
-                udemy_url="https://www.udemy.com/course/pmp-certification-exam-prep-course-pmbok-6th-edition/"))
-        if not any("scrum" in s for s in skills):
-            certs.append(dict(name="Professional Scrum Master (PSM I)",
-                institution="Scrum.org", description="Agile/Scrum methodology for team leads.",
-                udemy_url="https://www.udemy.com/course/scrum-master-certification-preparation/"))
-
-        # Java / Spring
-        if "java" in skills_text and not any("oracle" in c.lower() for c in content.certifications):
-            certs.append(dict(name="Oracle Certified Professional: Java SE 17 Developer",
-                institution="Oracle", description="Advanced Java development certification.",
-                udemy_url="https://www.udemy.com/course/java-se-17-developer-certification/"))
-
-        # Frontend
-        if any(s in skills_text for s in ["react", "angular", "vue", "frontend"]):
-            certs.append(dict(name="Meta Front-End Developer Professional Certificate",
-                institution="Meta (via Coursera)", description="Comprehensive frontend development with React.",
-                udemy_url="https://www.udemy.com/course/the-complete-web-development-bootcamp/"))
-
-        # Pick top 5 most relevant
-        # Build YouTube channel recommendations based on skills
-        youtube_channels = []
-        if any(s in skills_text for s in ["python", "django", "flask"]):
-            youtube_channels.append(dict(name="Corey Schafer", url="https://www.youtube.com/@coreyms", topic="Python, Django, Flask"))
-            youtube_channels.append(dict(name="Tech With Tim", url="https://www.youtube.com/@TechWithTim", topic="Python, ML, Projects"))
-        if any(s in skills_text for s in ["javascript", "react", "node", "frontend", "typescript"]):
-            youtube_channels.append(dict(name="Traversy Media", url="https://www.youtube.com/@TraversyMedia", topic="JavaScript, React, Web Dev"))
-            youtube_channels.append(dict(name="Fireship", url="https://www.youtube.com/@Fireship", topic="Modern web tech in 100 seconds"))
-        if any(s in skills_text for s in ["java", "spring"]):
-            youtube_channels.append(dict(name="Amigoscode", url="https://www.youtube.com/@amiaborscode", topic="Java, Spring Boot, Microservices"))
-            youtube_channels.append(dict(name="Java Brains", url="https://www.youtube.com/@Java.Brains", topic="Java, Spring, Microservices"))
-        if any(s in skills_text for s in ["aws", "cloud", "azure", "gcp", "devops"]):
-            youtube_channels.append(dict(name="TechWorld with Nana", url="https://www.youtube.com/@TechWorldwithNana", topic="DevOps, Kubernetes, Cloud"))
-            youtube_channels.append(dict(name="freeCodeCamp", url="https://www.youtube.com/@freecodecamp", topic="Full courses on everything"))
-        if any(s in skills_text for s in ["data", "ml", "machine learning", "ai", "tensorflow", "pytorch"]):
-            youtube_channels.append(dict(name="3Blue1Brown", url="https://www.youtube.com/@3blue1brown", topic="Math & ML intuition"))
-            youtube_channels.append(dict(name="Sentdex", url="https://www.youtube.com/@sentdex", topic="Python, ML, Data Science"))
-        if any(s in skills_text for s in ["system design", "architecture", "distributed"]):
-            youtube_channels.append(dict(name="Gaurav Sen", url="https://www.youtube.com/@gaborsen", topic="System Design interviews"))
-            youtube_channels.append(dict(name="ByteByteGo", url="https://www.youtube.com/@ByteByteGo", topic="System Design deep dives"))
-        # General career / interview channels
-        youtube_channels.append(dict(name="Neetcode", url="https://www.youtube.com/@NeetCode", topic="DSA & coding interviews"))
-        youtube_channels.append(dict(name="CS Dojo", url="https://www.youtube.com/@CSDojo", topic="Programming & career advice"))
-
-        # Learning platform links
+        # Deterministic fallback
         from urllib.parse import quote_plus
         skill_query = quote_plus(current_title)
-        learning_resources = [
-            dict(platform="Scaler Academy", url=f"https://www.scaler.com/topics/{quote_plus(content.skills[0].lower() if content.skills else 'programming')}/", description="In-depth tech courses with mentorship"),
-            dict(platform="Coursera", url=f"https://www.coursera.org/search?query={skill_query}", description="University-level courses from top institutions"),
-            dict(platform="Udemy", url=f"https://www.udemy.com/courses/search/?q={skill_query}", description="Affordable practical courses"),
-            dict(platform="Pluralsight", url=f"https://www.pluralsight.com/search?q={skill_query}", description="Tech-focused skill assessments & courses"),
-            dict(platform="LinkedIn Learning", url=f"https://www.linkedin.com/learning/search?keywords={skill_query}", description="Business & tech courses"),
-            dict(platform="freeCodeCamp", url="https://www.freecodecamp.org/learn/", description="Free full-stack curriculum"),
-            dict(platform="GeeksforGeeks", url=f"https://www.geeksforgeeks.org/courses?query={skill_query}", description="DSA, CS fundamentals & interview prep"),
-            dict(platform="InterviewBit / Scaler", url="https://www.interviewbit.com/courses/", description="Interview-focused coding practice"),
-        ]
-
         return dict(
             current_level=current_title,
             next_roles=[f"Senior {current_title}", f"Lead {current_title}", f"Staff {current_title}"],
@@ -373,36 +269,54 @@ def career_roadmap(content: ResumeContent, target_role=None) -> dict:
                 "Earn relevant industry certifications.",
                 "Build a portfolio of measurable achievements.",
                 "Network and seek mentorship in target domain.",
-                "Contribute to open-source projects in your domain.",
-                "Present at meetups or internal tech talks.",
             ],
-            recommended_certifications=certs[:5],
+            recommended_certifications=[],
             skill_gaps=["Leadership and mentorship", "System design at scale", "Cross-team communication"],
             timeline="12-24 months for next-level transition.",
-            youtube_channels=youtube_channels[:8],
-            learning_resources=learning_resources,
+            youtube_channels=[],
+            learning_resources=[
+                dict(platform="Coursera", url=f"https://www.coursera.org/search?query={skill_query}", description="University-level courses"),
+                dict(platform="Udemy", url=f"https://www.udemy.com/courses/search/?q={skill_query}", description="Affordable practical courses"),
+            ],
         )
 
-    system = "You are a career strategist. Provide concrete career roadmaps with specific certification recommendations, YouTube channels for learning, and course platform links."
+    # LLM-powered roadmap with structured JSON output
+    system = (
+        "You are a senior career strategist and tech industry expert. "
+        "Create a concrete, actionable career roadmap with specific recommendations. "
+        "Include real certification names, real YouTube channels, and real course platform links."
+    )
     prompt = (
-        f"Create a career roadmap for this professional.\n"
+        f"Create a detailed career roadmap for this professional.\n"
         f"Current role: {current_title}\n"
         f"Target role: {target_role or 'next logical career step'}\n\n"
-        f"RESUME:\n{content.model_dump_json(indent=2)}\n\n"
-        "For each recommended certification, provide the institution and Udemy course URL.\n"
-        "Include relevant YouTube channels for skill development.\n"
-        "Include links to learning platforms (Scaler, Coursera, Udemy, Pluralsight, etc.).\n\n"
-        "Return JSON:\n"
-        '{"current_level":"","next_roles":[],"roadmap_steps":[],'
-        '"recommended_certifications":[{"name":"","institution":"","udemy_url":"","description":""}],'
-        '"skill_gaps":[],"timeline":"",'
-        '"youtube_channels":[{"name":"","url":"","topic":""}],'
-        '"learning_resources":[{"platform":"","url":"","description":""}]}'
+        f"RESUME JSON:\n{content.model_dump_json(indent=2)}\n\n"
+        "Return a JSON object with these exact keys:\n"
+        "- current_level: string (assessment of current career stage)\n"
+        "- next_roles: array of 3-4 strings (specific next job titles)\n"
+        "- roadmap_steps: array of 6-8 strings (concrete action items)\n"
+        "- recommended_certifications: array of objects with keys: name, institution, description, udemy_url\n"
+        "- skill_gaps: array of 4-6 strings (skills to develop)\n"
+        "- timeline: string (realistic timeline for next transition)\n"
+        "- youtube_channels: array of objects with keys: name, url, topic\n"
+        "- learning_resources: array of objects with keys: platform, url, description\n\n"
+        "Return ONLY the JSON object, no markdown or extra text."
     )
     try:
-        return client.complete_json(prompt, system=system, max_tokens=2500)
-    except Exception:
-        return career_roadmap(content)
+        data = _gemini_complete_json(prompt, system=system, max_tokens=3000)
+        return dict(
+            current_level=data.get("current_level", current_title),
+            next_roles=data.get("next_roles", [])[:6],
+            roadmap_steps=data.get("roadmap_steps", [])[:10],
+            recommended_certifications=data.get("recommended_certifications", [])[:8],
+            skill_gaps=data.get("skill_gaps", [])[:8],
+            timeline=data.get("timeline", ""),
+            youtube_channels=data.get("youtube_channels", [])[:10],
+            learning_resources=data.get("learning_resources", [])[:10],
+        )
+    except Exception as e:
+        logger.warning("AI career roadmap failed: %s, using deterministic fallback", e)
+        return _deterministic_roadmap(content, current_title)
 
 
 # ---------------- Job search / company suggestions ----------------

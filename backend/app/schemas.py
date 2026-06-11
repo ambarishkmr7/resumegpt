@@ -139,6 +139,8 @@ class ResumeOut(BaseModel):
     content: ResumeContent
     ats_score: Optional[int] = None
     original_filename: Optional[str] = None
+    career_analysis: Optional["CareerAnalysisResponse"] = None
+    career_roadmap: Optional["CareerRoadmapResponse"] = None
     created_at: datetime
     updated_at: datetime
 
@@ -197,6 +199,7 @@ class SuggestResponse(BaseModel):
 class CareerAnalysisRequest(BaseModel):
     content: ResumeContent
     job_description: Optional[str] = None
+    resume_id: Optional[str] = None  # If provided, cache result in DB
 
 
 class CareerAnalysisResponse(BaseModel):
@@ -209,6 +212,7 @@ class CareerAnalysisResponse(BaseModel):
 class CareerRoadmapRequest(BaseModel):
     content: ResumeContent
     target_role: Optional[str] = None
+    resume_id: Optional[str] = None  # If provided, cache result in DB
 
 
 class CertificationDetail(BaseModel):
@@ -308,3 +312,8 @@ class GenerateSampleRequest(BaseModel):
     job_title: str
     years_experience: int = 3
     name: str = "Your Name"
+
+
+# Resolve forward references for ResumeOut (which references CareerAnalysisResponse
+# and CareerRoadmapResponse defined earlier in this file via string annotations)
+ResumeOut.model_rebuild()

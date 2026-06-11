@@ -35,14 +35,13 @@ class Settings(BaseSettings):
     S3_ENDPOINT_URL: str = ""               # R2: https://<account_id>.r2.cloudflarestorage.com  |  AWS: leave empty
     S3_ACCESS_KEY_ID: str = ""
     S3_SECRET_ACCESS_KEY: str = ""
-    S3_BUCKET_NAME: str = "resumegpt"
+    S3_BUCKET_NAME: str = "resume"
     S3_REGION: str = "auto"                 # R2 uses "auto"; AWS e.g. "us-east-1"
 
     # AI provider (optional)
     ANTHROPIC_API_KEY: str = ""
     AI_MODEL: str = "claude-sonnet-4-20250514"
 
-    # Google Gemini (FREE tier — 15 RPM, 1M tokens/day)
     # Get key from: https://aistudio.google.com/app/apikey
     GEMINI_API_KEY: str = ""
 

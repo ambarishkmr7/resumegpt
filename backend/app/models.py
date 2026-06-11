@@ -34,6 +34,8 @@ class Resume(Base):
     ats_score = Column(Integer, nullable=True)
     original_filename = Column(String, nullable=True)
     storage_key = Column(String, nullable=True)   # S3 object key or local relative path
+    career_analysis = Column(JSON, nullable=True)  # Cached career analysis result
+    career_roadmap = Column(JSON, nullable=True)   # Cached career roadmap result
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     owner = relationship("User", back_populates="resumes")

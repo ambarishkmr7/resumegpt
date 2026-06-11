@@ -1,4 +1,5 @@
 import logging
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
@@ -6,7 +7,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.ai import services as ai_services
-from app.ai import client as ai_client
 from app.config import get_settings
 from app.core.deps import get_current_user
 from app.database import get_db
@@ -116,36 +116,49 @@ async def upload_resume(
     if not magic_ok:
         raise HTTPException(status_code=400, detail="File content does not match a valid PDF or DOCX")
 
+    # 1) Persist the original file to storage first (needed for LLM parsing).
+    ext = Path(file.filename or "file").suffix.lower() or ".pdf"
+    content_type = "application/pdf" if ext == ".pdf" else (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    # We need a key before the DB record exists; use a temp key, then rename.
+    tmp_key = f"uploads/tmp-{uuid.uuid4().hex}{ext}"
     try:
-        text = parser.extract_text(data, file.filename or "resume")
+        storage.upload_bytes(data, tmp_key, content_type=content_type)
+    except Exception:
+        logger.error("Failed to store uploaded file for parsing", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to store uploaded file")
+
+    # 2) Parse the resume using the LLM-powered parser.
+    try:
+        content = parser.parse_resume(tmp_key, file.filename or "resume", storage)
     except ValueError as e:
+        # Clean up stored file on parse failure
+        storage.delete_object(tmp_key)
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        storage.delete_object(tmp_key)
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        storage.delete_object(tmp_key)
+        logger.error("LLM parsing failed", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Resume parsing failed: {e}")
 
-    # Prefer AI parse when available; otherwise heuristic.
-    if ai_client.available():
-        try:
-            content = ai_services.ai_parse(text)
-        except Exception:
-            content = parser.heuristic_parse(text)
-    else:
-        content = parser.heuristic_parse(text)
-
+    # 3) Create the DB record.
     r = Resume(user_id=user.id, title=title, template_id=template_id,
                content=content.model_dump(), original_filename=file.filename)
     r.ats_score = ats_engine.score_resume(content).score
     db.add(r); db.commit(); db.refresh(r)
 
-    # Persist the original file to cloud/local storage so we can serve it back.
+    # 4) Move the file from temp key to final key.
     try:
-        ext = Path(file.filename or "file").suffix.lower() or ".pdf"
-        content_type = "application/pdf" if ext == ".pdf" else (
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-        key = f"uploads/{r.id}{ext}"
-        r.storage_key = storage.upload_bytes(data, key, content_type=content_type)
+        final_key = f"uploads/{r.id}{ext}"
+        file_bytes = storage.download_bytes(tmp_key)
+        r.storage_key = storage.upload_bytes(file_bytes, final_key, content_type=content_type)
+        storage.delete_object(tmp_key)
         db.commit(); db.refresh(r)
     except Exception:
-        logger.warning("Failed to persist original file for resume %s", r.id, exc_info=True)
+        logger.warning("Failed to set final storage key for resume %s", r.id, exc_info=True)
 
     logger.info("Resume uploaded: %s (user=%s, file=%s, size=%d bytes, ats=%s)",
                 r.id, user.id, file.filename, len(data), r.ats_score)
@@ -160,16 +173,33 @@ async def parse_reference(
     """Parse someone else's resume to use as a structural reference (feature #8).
     Returns parsed content without saving it."""
     data = await file.read()
+    if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File exceeds {settings.MAX_UPLOAD_MB}MB")
+
+    allowed_exts = {".pdf", ".docx"}
+    ext = Path(file.filename or "file").suffix.lower()
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail="Only PDF and DOCX files are allowed")
+
+    # Store temporarily for LLM parsing
+    tmp_key = f"ref-uploads/tmp-{uuid.uuid4().hex}{ext}"
+    content_type = "application/pdf" if ext == ".pdf" else (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
     try:
-        text = parser.extract_text(data, file.filename or "reference")
+        storage.upload_bytes(data, tmp_key, content_type=content_type)
+        content = parser.parse_resume(tmp_key, file.filename or "reference", storage)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if ai_client.available():
-        try:
-            return ai_services.ai_parse(text)
-        except Exception:
-            pass
-    return parser.heuristic_parse(text)
+    except RuntimeError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("LLM reference parsing failed", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Resume parsing failed: {e}")
+    finally:
+        storage.delete_object(tmp_key)
+
+    return content
 
 
 # ---------- ATS ----------
@@ -197,15 +227,57 @@ def cover_letter(payload: CoverLetterRequest, user: User = Depends(get_current_u
 
 
 @router.post("/analyze", response_model=CareerAnalysisResponse)
-def analyze(payload: CareerAnalysisRequest, user: User = Depends(get_current_user)):
-    result = ai_services.analyze_career(payload.content, payload.job_description)
-    return CareerAnalysisResponse(**result)
+def analyze(payload: CareerAnalysisRequest, user: User = Depends(get_current_user),
+            db: Session = Depends(get_db)):
+    # If resume_id is provided, check for cached result first
+    if payload.resume_id:
+        r = _get_owned(payload.resume_id, user, db)
+        if r.career_analysis:
+            logger.info("Returning cached career analysis for resume %s", payload.resume_id)
+            return CareerAnalysisResponse(**r.career_analysis)
+        # Generate and cache
+        try:
+            result = ai_services.analyze_career(payload.content, payload.job_description)
+            r.career_analysis = result
+            db.commit()
+            return CareerAnalysisResponse(**result)
+        except Exception as e:
+            logger.error("Career analysis failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+    # No resume_id — just generate without caching
+    try:
+        result = ai_services.analyze_career(payload.content, payload.job_description)
+        return CareerAnalysisResponse(**result)
+    except Exception as e:
+        logger.error("Career analysis failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
 
 @router.post("/roadmap", response_model=CareerRoadmapResponse)
-def roadmap(payload: CareerRoadmapRequest, user: User = Depends(get_current_user)):
-    result = ai_services.career_roadmap(payload.content, payload.target_role)
-    return CareerRoadmapResponse(**result)
+def roadmap(payload: CareerRoadmapRequest, user: User = Depends(get_current_user),
+            db: Session = Depends(get_db)):
+    # If resume_id is provided, check for cached result first
+    if payload.resume_id:
+        r = _get_owned(payload.resume_id, user, db)
+        if r.career_roadmap:
+            logger.info("Returning cached career roadmap for resume %s", payload.resume_id)
+            return CareerRoadmapResponse(**r.career_roadmap)
+        # Generate and cache
+        try:
+            result = ai_services.career_roadmap(payload.content, payload.target_role)
+            r.career_roadmap = result
+            db.commit()
+            return CareerRoadmapResponse(**result)
+        except Exception as e:
+            logger.error("Career roadmap failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Roadmap failed: {e}")
+    # No resume_id — just generate without caching
+    try:
+        result = ai_services.career_roadmap(payload.content, payload.target_role)
+        return CareerRoadmapResponse(**result)
+    except Exception as e:
+        logger.error("Career roadmap failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Roadmap failed: {e}")
 
 
 @router.post("/writeup", response_model=WriteupResponse)
