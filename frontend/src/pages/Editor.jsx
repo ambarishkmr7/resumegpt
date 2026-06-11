@@ -255,7 +255,7 @@ export default function Editor() {
             )}
 
             {rightTab === "ai" && (
-              <AIToolsPanel content={content}
+              <AIToolsPanel content={content} resumeId={id}
                 onApplyVariant={(v) => { setContent(v); setStatus("Applied variant"); }} />
             )}
 

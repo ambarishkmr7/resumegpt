@@ -147,18 +147,18 @@ export const api = {
       body: JSON.stringify(body),
     }).then(handle),
 
-  analyze: (content, job_description) =>
+  analyze: (content, job_description, resume_id) =>
     fetch(`${BASE}/api/resumes/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ content, job_description }),
+      body: JSON.stringify({ content, job_description, resume_id }),
     }).then(handle),
 
-  roadmap: (content, target_role) =>
+  roadmap: (content, target_role, resume_id) =>
     fetch(`${BASE}/api/resumes/roadmap`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ content, target_role }),
+      body: JSON.stringify({ content, target_role, resume_id }),
     }).then(handle),
 
   writeup: (content, purpose) =>

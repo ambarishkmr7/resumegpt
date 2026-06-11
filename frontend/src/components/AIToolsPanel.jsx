@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 
-export default function AIToolsPanel({ content, onApplyVariant }) {
+export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
   const [activeTab, setActiveTab] = useState(null);
   const [loading, setLoading]     = useState(false);
   const [analysis, setAnalysis]   = useState(null);
@@ -22,9 +22,15 @@ export default function AIToolsPanel({ content, onApplyVariant }) {
 
   const tools = [
     { id: "analysis", icon: "🔍", label: "Career Analysis",
-      action: () => run("analysis", async () => setAnalysis(await api.analyze(content, jobDesc || null))) },
+      action: () => run("analysis", async () => {
+        const result = await api.analyze(content, jobDesc || null, resumeId || null);
+        setAnalysis(result);
+      }) },
     { id: "roadmap",  icon: "🗺️", label: "Career Roadmap",
-      action: () => run("roadmap",  async () => setRoadmap(await api.roadmap(content, targetRole || null))) },
+      action: () => run("roadmap",  async () => {
+        const result = await api.roadmap(content, targetRole || null, resumeId || null);
+        setRoadmap(result);
+      }) },
     { id: "trending", icon: "🔥", label: "Trending Jobs",
       action: () => run("trending", async () => setTrending(await api.trendingJobs(content))) },
     { id: "writeup",  icon: "✍️", label: "Pro Writeup",
