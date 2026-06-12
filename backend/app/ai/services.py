@@ -10,6 +10,71 @@ from app.resumes.ats import score_resume
 logger = logging.getLogger(__name__)
 
 
+# ── Domain detection helper ─────────────────────────────────────────────────
+
+def _detect_domain(content: ResumeContent) -> str:
+    """Detect the professional domain from resume content.
+    Returns one of: healthcare, engineering, education, finance, military,
+    trades, creative, legal, government, tech, management, sales, research, other.
+    """
+    title = (content.contact.title or "").lower()
+    skills = " ".join(s.lower() for s in content.skills)
+    bullets = " ".join(b.lower() for e in content.experience for b in e.bullets)
+    all_text = f"{title} {skills} {bullets}"
+
+    DOMAIN_KEYWORDS = {
+        "healthcare": ["nurse", "doctor", "physician", "medical", "clinical", "patient", "hospital", "health", "pharma", "pharmacist", "therapist", "surgical", "diagnosis", "treatment", "ems", "paramedic", "dental", "radiology", "lab technician", "athletic trainer", "sports medicine", "rehabilitation", "physiotherapy", "occupational therapy"],
+        "military": ["military", "army", "navy", "marine", "air force", "veteran", "enlisted", "commissioned", "sergeant", "lieutenant", "captain", "commander", "corps", "battalion", "regiment", "deployment", "defense", "armed forces", "reserves"],
+        "engineering": ["mechanical", "civil", "electrical", "chemical", "hvac", "piping", "structural", "automotive", "manufacturing", "quality engineer", "design engineer", "production", "maintenance engineer", "solidworks", "autocad", "catia", "ansys", "fea", "cnc", "plc", "scada", "six sigma", "lean manufacturing", "iso 9001"],
+        "education": ["teacher", "professor", "lecturer", "instructor", "curriculum", "classroom", "school", "university", "college", "education", "pedagogy", "student", "lesson plan", "academic", "tutor", "principal", "dean"],
+        "finance": ["accountant", "financial", "audit", "tax", "chartered", "investment", "banking", "portfolio", "risk analyst", "bloomberg", "sap fico", "tally", "gst", "ifrs", "valuation", "dcf", "m&a", "actuarial", "insurance underwriter"],
+        "trades": ["electrician", "plumber", "carpenter", "welder", "mason", "hvac technician", "mechanic", "construction", "foreman", "apprentice", "journeyman", "osha", "building code"],
+        "creative": ["designer", "graphic", "illustrator", "photographer", "videographer", "animator", "art director", "creative director", "ui ", "ux ", "figma", "sketch", "adobe", "brand", "visual"],
+        "legal": ["lawyer", "attorney", "paralegal", "legal", "counsel", "litigation", "compliance", "regulatory", "contract", "corporate law", "judge", "barrister", "solicitor"],
+        "government": ["civil service", "public sector", "municipal", "federal", "state government", "policy", "administrative", "public affairs", "diplomat", "bureaucrat"],
+        "tech": ["software", "developer", "engineer", "programming", "python", "javascript", "react", "node", "java", "devops", "cloud", "aws", "docker", "kubernetes", "data scientist", "machine learning", "full stack", "frontend", "backend", "web developer", "mobile developer", "cybersecurity", "network engineer", "system administrator", "database", "api", "agile", "scrum"],
+        "management": ["manager", "director", "vp ", "vice president", "head of", "chief", "ceo", "cto", "coo", "cfo", "operations manager", "general manager", "program manager", "project manager"],
+        "sales": ["sales", "account executive", "business development", "bd ", "territory", "quota", "pipeline", "crm", "salesforce", "account manager", "key account"],
+        "research": ["research", "scientist", "phd", "postdoc", "laboratory", "lab ", "experiment", "hypothesis", "publication", "journal", "peer review", "grant", "r&d"],
+    }
+
+    # Score each domain by counting keyword matches
+    scores = {}
+    for domain, keywords in DOMAIN_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in all_text)
+        if score > 0:
+            scores[domain] = score
+
+    if not scores:
+        return "other"
+
+    # Return the domain with the highest score
+    return max(scores, key=scores.get)
+
+
+def _domain_context(content: ResumeContent) -> str:
+    """Return a brief domain description string for use in LLM prompts."""
+    domain = _detect_domain(content)
+    title = content.contact.title or (content.experience[0].title if content.experience else "Professional")
+    domain_labels = {
+        "healthcare": "Healthcare & Medical",
+        "military": "Military & Defense",
+        "engineering": "Engineering & Manufacturing",
+        "education": "Education & Academia",
+        "finance": "Finance & Accounting",
+        "trades": "Skilled Trades & Construction",
+        "creative": "Creative & Design",
+        "legal": "Legal & Compliance",
+        "government": "Government & Public Sector",
+        "tech": "Technology & Software",
+        "management": "Management & Leadership",
+        "sales": "Sales & Business Development",
+        "research": "Research & Science",
+        "other": "Professional",
+    }
+    return f"Domain: {domain_labels.get(domain, 'Professional')} | Current role: {title}"
+
+
 # ── New Gemini SDK client (replaces old REST-based client for structured output) ──
 
 def _gemini_client():
@@ -130,92 +195,93 @@ def analyze_career(content: ResumeContent, job_description=None) -> dict:
     quantified = sum(1 for e in content.experience for b in e.bullets if re.search(r'\d+[%$KMkm]|\d{2,}', b))
 
     if not client.available():
-        # Deterministic fallback when no AI key is configured
-        strengths, weaknesses, recs = [], [], []
-        if content.experience:
-            strengths.append(f"Demonstrates {len(content.experience)} role(s) of professional experience.")
-        if quantified > 2:
-            strengths.append(f"{quantified} bullet points include quantified achievements (numbers, %, $).")
-        if content.skills and len(content.skills) >= 5:
-            strengths.append(f"Comprehensive skills section with {len(content.skills)} technologies listed.")
-        if content.certifications:
-            strengths.append(f"Holds {len(content.certifications)} certification(s) validating expertise.")
-        if not content.summary:
-            weaknesses.append("Professional summary is missing or too brief.")
-        if total_bullets > 0 and quantified == 0:
-            weaknesses.append("No quantified achievements found. Numbers make bullets 40% more impactful.")
-        if not content.certifications:
-            weaknesses.append("No certifications listed — they validate skills and boost ATS scores.")
-        for issue in result.issues:
-            recs.append(issue.suggestion)
-        recs.append("Tailor your resume for each application: match keywords from the job description.")
-        return dict(
-            strengths=strengths[:6] or ["Resume has basic sections filled."],
-            weaknesses=weaknesses[:6] or ["No critical issues detected."],
-            recommendations=recs[:8],
-            overall_assessment=f"ATS Score: {result.score}/100. {'Excellent' if result.score >= 85 else 'Good' if result.score >= 70 else 'Needs work'} resume. Impact evidence: {quantified}/{total_bullets} quantified bullets.",
-        )
+        return _deterministic_analysis(content, job_description, result, total_bullets, quantified)
 
-    # LLM-powered analysis with structured JSON output
+    # LLM-powered analysis — domain-aware prompts
+    domain_hint = _domain_context(content)
     system = (
-        "You are a senior career coach, hiring manager, and ATS expert with 15+ years of experience. "
-        "Analyze the resume deeply and provide specific, actionable insights — not generic advice. "
-        "Reference specific details from the resume in your analysis."
+        "You are a senior career coach and hiring expert with 15+ years of experience across ALL industries. "
+        "Detect the candidate's professional domain from their resume and provide domain-appropriate analysis. "
+        "Be specific, actionable, and reference actual details from the resume. Never give generic advice."
     )
     prompt = (
-        "Deeply analyze this resume. Evaluate:\n"
-        "- Quantified achievements vs vague statements\n"
-        "- Action verb usage and impact language\n"
-        "- Skill gaps relative to current market demand\n"
-        "- Career progression (title growth, scope increase)\n"
-        "- Personal branding consistency\n"
-        "- ATS optimization opportunities\n\n"
+        f"Analyze this resume deeply. {domain_hint}\n\n"
+        "Evaluate: quantified achievements, action verb usage, skill gaps relative to their field, "
+        "career progression, personal branding, and resume optimization opportunities.\n\n"
         "Return a JSON object with these exact keys:\n"
-        "- strengths: array of 5-6 strings (specific things done well, with evidence)\n"
-        "- weaknesses: array of 5-6 strings (specific gaps with examples)\n"
-        "- recommendations: array of 8-10 strings (actionable steps, prioritized)\n"
-        "- overall_assessment: string (2-3 paragraph thorough assessment)\n\n"
+        "- strengths: array of 5-6 strings (specific things done well, with evidence from resume)\n"
+        "- weaknesses: array of 5-6 objects, each with: {\"text\": \"...\", \"urgency\": \"High Priority\" or \"Medium Priority\" or \"Low Priority\"}\n"
+        "- recommendations: array of 8-10 objects, each with: {\"text\": \"...\", \"impact\": \"High Impact\" or \"Quick Win\" or \"Long-term\" or \"Critical\" or \"Strategic\", \"why_it_matters\": \"1-2 sentence explanation specific to this candidate\"}\n"
+        "- overall_assessment: string (2-3 paragraph thorough assessment referencing their domain)\n\n"
         f"JOB DESCRIPTION (optional):\n{job_description or 'General analysis'}\n\n"
         f"RESUME JSON:\n{content.model_dump_json(indent=2)}\n\n"
         "Return ONLY the JSON object, no markdown or extra text."
     )
     try:
         data = _gemini_complete_json(prompt, system=system, max_tokens=2500)
+        # Normalize weaknesses to always be objects with text + urgency
+        raw_weaknesses = data.get("weaknesses", [])
+        weaknesses = []
+        for w in raw_weaknesses:
+            if isinstance(w, str):
+                weaknesses.append({"text": w, "urgency": "Medium Priority"})
+            elif isinstance(w, dict):
+                weaknesses.append({"text": w.get("text", ""), "urgency": w.get("urgency", "Medium Priority")})
+        # Normalize recommendations to always be objects with text + impact + why_it_matters
+        raw_recs = data.get("recommendations", [])
+        recommendations = []
+        for r in raw_recs:
+            if isinstance(r, str):
+                recommendations.append({"text": r, "impact": "Strategic", "why_it_matters": "Following this recommendation will improve your career prospects."})
+            elif isinstance(r, dict):
+                recommendations.append({
+                    "text": r.get("text", ""),
+                    "impact": r.get("impact", "Strategic"),
+                    "why_it_matters": r.get("why_it_matters", "Following this recommendation will improve your career prospects."),
+                })
         return dict(
             strengths=data.get("strengths", [])[:8],
-            weaknesses=data.get("weaknesses", [])[:8],
-            recommendations=data.get("recommendations", [])[:12],
+            weaknesses=weaknesses[:8],
+            recommendations=recommendations[:12],
             overall_assessment=data.get("overall_assessment", ""),
         )
     except Exception as e:
         logger.warning("AI career analysis failed: %s, using deterministic fallback", e)
-        # Return deterministic fallback
         return _deterministic_analysis(content, job_description, result, total_bullets, quantified)
 
 
-def _deterministic_analysis(content, job_description, result, total_bullets, quantified):
-    """Deterministic fallback for career analysis when AI is unavailable."""
+def _deterministic_analysis(content, _job_description, result, total_bullets, quantified):
+    """Deterministic fallback for career analysis when AI is unavailable.
+    Returns enriched objects with urgency/impact/why_it_matters."""
+    domain = _detect_domain(content)
+    title = content.contact.title or (content.experience[0].title if content.experience else "Professional")
     strengths, weaknesses, recs = [], [], []
+
     if content.experience:
         strengths.append(f"Demonstrates {len(content.experience)} role(s) of professional experience.")
     if quantified > 2:
         strengths.append(f"{quantified} bullet points include quantified achievements (numbers, %, $).")
     if content.skills and len(content.skills) >= 5:
-        strengths.append(f"Comprehensive skills section with {len(content.skills)} technologies listed.")
+        skills_label = "skills" if domain == "tech" else "competencies"
+        strengths.append(f"Comprehensive skills section with {len(content.skills)} {skills_label} listed.")
     if content.certifications:
         strengths.append(f"Holds {len(content.certifications)} certification(s) validating expertise.")
+
     if not content.summary:
-        weaknesses.append("Professional summary is missing or too brief.")
+        weaknesses.append({"text": "Professional summary is missing or too brief — a strong summary sets the tone for your entire resume.", "urgency": "High Priority"})
     if total_bullets > 0 and quantified == 0:
-        weaknesses.append("No quantified achievements found. Numbers make bullets 40% more impactful.")
+        weaknesses.append({"text": "No quantified achievements found. Numbers and metrics make your impact 40% more persuasive to hiring managers.", "urgency": "High Priority"})
     if not content.certifications:
-        weaknesses.append("No certifications listed — they validate skills and boost ATS scores.")
+        weaknesses.append({"text": f"No certifications listed — relevant credentials in your field validate expertise and help you stand out among other {title}s.", "urgency": "Medium Priority"})
+
     for issue in result.issues:
-        recs.append(issue.suggestion)
-    recs.append("Tailor your resume for each application: match keywords from the job description.")
+        recs.append({"text": issue.suggestion, "impact": "High Impact", "why_it_matters": f"This directly addresses a gap that hiring managers in your field commonly look for."})
+
+    recs.append({"text": f"Tailor your resume for each application: match keywords from the job description to increase your chances of passing screening.", "impact": "Critical", "why_it_matters": f"Customizing your resume for each role is one of the highest-impact actions a {title} can take."})
+
     return dict(
         strengths=strengths[:6] or ["Resume has basic sections filled."],
-        weaknesses=weaknesses[:6] or ["No critical issues detected."],
+        weaknesses=weaknesses[:6] or [{"text": "No critical issues detected.", "urgency": "Low Priority"}],
         recommendations=recs[:8],
         overall_assessment=(
             f"ATS Score: {result.score}/100. "
@@ -226,26 +292,109 @@ def _deterministic_analysis(content, job_description, result, total_bullets, qua
 
 
 def _deterministic_roadmap(content, current_title):
-    """Deterministic fallback for career roadmap when AI is unavailable."""
+    """Deterministic fallback for career roadmap when AI is unavailable.
+    Domain-aware: generates relevant steps based on detected professional domain."""
     from urllib.parse import quote_plus
+    domain = _detect_domain(content)
     skill_query = quote_plus(current_title)
-    return dict(
-        current_level=current_title,
-        next_roles=[f"Senior {current_title}", f"Lead {current_title}", f"Staff {current_title}"],
-        roadmap_steps=[
-            "Deepen expertise in 1-2 core technologies.",
-            "Take on cross-functional or leadership projects.",
-            "Earn relevant industry certifications.",
-            "Build a portfolio of measurable achievements.",
-            "Network and seek mentorship in target domain.",
+
+    # Domain-specific roadmap step templates
+    DOMAIN_ROADMAPS = {
+        "healthcare": {
+            "next_roles": [f"Senior {current_title}", f"Clinical Coordinator", f"Department Manager", f"Director of {current_title}"],
+            "steps": [
+                {"text": f"Deepen clinical expertise and pursue advanced certifications relevant to {current_title}.", "timeframe": "Month 1-3", "category": "Credentials", "explanation": "Advanced certifications validate your expertise and are often required for senior clinical roles."},
+                {"text": "Take on leadership responsibilities — lead a team, mentor junior staff, or coordinate a program.", "timeframe": "Month 2-4", "category": "Leadership", "explanation": "Demonstrating leadership in a clinical setting is essential for moving into management or director-level roles."},
+                {"text": "Document measurable outcomes from your work (patient outcomes, injury reduction rates, program efficiency).", "timeframe": "Month 1-6", "category": "Portfolio", "explanation": "Quantified achievements in healthcare settings prove your impact and are critical for advancement."},
+                {"text": "Network with professionals in your field through conferences, associations, and LinkedIn.", "timeframe": "Ongoing", "category": "Network", "explanation": "Healthcare hiring heavily relies on professional networks and referrals from trusted colleagues."},
+                {"text": "Develop proficiency in healthcare data systems, compliance standards, and program management.", "timeframe": "Month 3-9", "category": "Skills", "explanation": "Administrative and data skills differentiate clinical practitioners who move into management roles."},
+            ],
+            "skill_gaps": ["Healthcare program management", "Data-driven outcome measurement", "Compliance and regulatory knowledge", "Team leadership and mentoring"],
+        },
+        "engineering": {
+            "next_roles": [f"Senior {current_title}", f"Lead {current_title}", f"Engineering Manager", f"Principal {current_title}"],
+            "steps": [
+                {"text": f"Deepen technical expertise in your core engineering domain and adjacent specialties.", "timeframe": "Month 1-3", "category": "Skills", "explanation": "Technical depth is the foundation for senior engineering roles and is evaluated in every promotion review."},
+                {"text": "Lead a cross-functional project from planning through delivery.", "timeframe": "Month 2-6", "category": "Leadership", "explanation": "Project leadership demonstrates your ability to coordinate teams and deliver results — key for engineering management."},
+                {"text": "Earn a relevant professional certification (PE, PMP, Six Sigma, domain-specific).", "timeframe": "Month 3-9", "category": "Credentials", "explanation": "Professional certifications validate expertise and are often required for senior engineering positions."},
+                {"text": "Build a portfolio of documented projects with measurable outcomes (cost savings, efficiency gains).", "timeframe": "Month 1-6", "category": "Portfolio", "explanation": "A documented portfolio of engineering achievements is your strongest tool for career advancement."},
+                {"text": "Network through professional engineering associations, conferences, and industry events.", "timeframe": "Ongoing", "category": "Network", "explanation": "Engineering career advancement often depends on visibility within professional communities."},
+            ],
+            "skill_gaps": ["Project management", "Cross-functional leadership", "Advanced technical specialization", "Budget and resource planning"],
+        },
+        "education": {
+            "next_roles": [f"Senior {current_title}", f"Department Head", f"Curriculum Coordinator", f"Assistant Principal"],
+            "steps": [
+                {"text": "Pursue advanced certifications or specialized training in your subject area or pedagogy.", "timeframe": "Month 1-4", "category": "Credentials", "explanation": "Advanced credentials open doors to senior teaching roles, curriculum design, and administrative positions."},
+                {"text": "Take on mentoring responsibilities for new teachers or student teachers.", "timeframe": "Month 2-6", "category": "Leadership", "explanation": "Mentoring demonstrates leadership and is a key factor in promotion to department head or administrative roles."},
+                {"text": "Document student outcomes, innovative teaching methods, and program improvements you've led.", "timeframe": "Month 1-6", "category": "Portfolio", "explanation": "Quantified educational outcomes prove your effectiveness and are essential for career advancement in education."},
+                {"text": "Engage with educational communities, attend conferences, and contribute to professional development.", "timeframe": "Ongoing", "category": "Network", "explanation": "Visibility in educational communities leads to opportunities for leadership roles and specialized positions."},
+                {"text": "Develop skills in educational technology, curriculum design, or administrative management.", "timeframe": "Month 3-9", "category": "Skills", "explanation": "Diversifying your skill set beyond classroom teaching opens paths to curriculum coordination and administration."},
+            ],
+            "skill_gaps": ["Educational technology", "Curriculum design", "Program administration", "Data-driven student assessment"],
+        },
+        "military": {
+            "next_roles": [f"Senior {current_title}", f"Program Manager", f"Operations Manager", f"Training Director"],
+            "steps": [
+                {"text": "Translate military experience into civilian-equivalent skills and certifications.", "timeframe": "Month 1-3", "category": "Credentials", "explanation": "Civilian employers may not understand military roles — translating your experience is critical for a successful transition."},
+                {"text": "Pursue industry certifications relevant to your target field (PMP, Six Sigma, security, logistics).", "timeframe": "Month 2-6", "category": "Credentials", "explanation": "Industry certifications bridge the gap between military and civilian career requirements."},
+                {"text": "Network through veteran-friendly organizations, LinkedIn, and industry associations.", "timeframe": "Ongoing", "category": "Network", "explanation": "Veteran hiring networks and referrals are among the most effective paths to civilian employment."},
+                {"text": "Develop civilian workplace skills: corporate communication, project management tools, industry-specific software.", "timeframe": "Month 1-6", "category": "Skills", "explanation": "Adapting to civilian workplace norms and tools accelerates your transition and career growth."},
+                {"text": "Document measurable achievements from military service (team size, budget, operational outcomes).", "timeframe": "Month 1-3", "category": "Portfolio", "explanation": "Quantified military achievements demonstrate leadership and operational capability to civilian employers."},
+            ],
+            "skill_gaps": ["Civilian project management tools", "Corporate communication", "Industry-specific certifications", "Civilian workplace norms"],
+        },
+        "finance": {
+            "next_roles": [f"Senior {current_title}", f"Finance Manager", f"Controller", f"VP of Finance"],
+            "steps": [
+                {"text": "Pursue advanced certifications (CPA, CFA, CA, CMA) relevant to your finance specialty.", "timeframe": "Month 1-6", "category": "Credentials", "explanation": "Advanced finance certifications are often mandatory for senior roles and significantly increase earning potential."},
+                {"text": "Take on cross-functional projects involving budgeting, forecasting, or strategic planning.", "timeframe": "Month 2-6", "category": "Leadership", "explanation": "Cross-functional financial leadership experience is essential for moving into management and director roles."},
+                {"text": "Develop proficiency in financial analytics tools, ERP systems, and data visualization.", "timeframe": "Month 1-4", "category": "Skills", "explanation": "Technical proficiency in financial systems differentiates candidates for senior finance positions."},
+                {"text": "Build a track record of measurable financial impact (cost savings, revenue growth, process improvements).", "timeframe": "Month 1-12", "category": "Portfolio", "explanation": "Quantified financial achievements are the primary metric for advancement in finance careers."},
+                {"text": "Network through finance professional associations, CFO forums, and industry events.", "timeframe": "Ongoing", "category": "Network", "explanation": "Finance hiring heavily relies on professional networks and referrals from industry peers."},
+            ],
+            "skill_gaps": ["Advanced financial modeling", "ERP systems (SAP/Oracle)", "Strategic planning", "Regulatory compliance"],
+        },
+        "tech": {
+            "next_roles": [f"Senior {current_title}", f"Lead {current_title}", f"Staff {current_title}", f"Engineering Manager"],
+            "steps": [
+                {"text": "Deepen expertise in 1-2 core technologies and expand into adjacent areas.", "timeframe": "Month 1-3", "category": "Skills", "explanation": "Technical depth is the foundation for senior engineering roles and is evaluated in every promotion review."},
+                {"text": "Take on cross-functional or leadership projects that demonstrate system-level thinking.", "timeframe": "Month 2-6", "category": "Leadership", "explanation": "Cross-team leadership and system ownership are key differentiators for staff-level promotions."},
+                {"text": "Earn relevant industry certifications (cloud, security, domain-specific).", "timeframe": "Month 3-9", "category": "Credentials", "explanation": "Certifications validate expertise and help your resume pass ATS filters at top companies."},
+                {"text": "Build a portfolio of measurable achievements (performance improvements, cost reductions, scale handled).", "timeframe": "Month 1-6", "category": "Portfolio", "explanation": "Quantified achievements are 40% more persuasive than vague descriptions in tech hiring."},
+                {"text": "Network through tech communities, open source contributions, and conference participation.", "timeframe": "Ongoing", "category": "Network", "explanation": "70-80% of senior tech hires happen through referrals and community connections."},
+            ],
+            "skill_gaps": ["System design at scale", "Cross-team leadership", "Technical strategy", "Mentorship and coaching"],
+        },
+    }
+
+    # Default for domains not explicitly mapped (sales, creative, legal, trades, etc.)
+    default = {
+        "next_roles": [f"Senior {current_title}", f"Lead {current_title}", f"{current_title} Manager", f"Director of {current_title}"],
+        "steps": [
+            {"text": f"Deepen expertise in your core professional domain and stay current with industry trends.", "timeframe": "Month 1-3", "category": "Skills", "explanation": "Continuous professional development is essential for staying competitive and advancing in any field."},
+            {"text": "Take on leadership responsibilities — lead projects, mentor colleagues, or coordinate initiatives.", "timeframe": "Month 2-6", "category": "Leadership", "explanation": "Demonstrating leadership is the most important factor for promotion to senior and management roles."},
+            {"text": "Earn relevant professional certifications or credentials in your field.", "timeframe": "Month 3-9", "category": "Credentials", "explanation": "Professional certifications validate your expertise and help you stand out from other candidates."},
+            {"text": "Document measurable achievements and build a portfolio of your best work.", "timeframe": "Month 1-6", "category": "Portfolio", "explanation": "Quantified achievements prove your impact and are critical for career advancement in any profession."},
+            {"text": "Network actively through professional associations, industry events, and online communities.", "timeframe": "Ongoing", "category": "Network", "explanation": "Professional networking opens doors to opportunities that are never publicly advertised."},
         ],
+        "skill_gaps": ["Leadership and team management", "Strategic planning", "Industry-specific advanced skills", "Professional communication"],
+    }
+
+    roadmap = DOMAIN_ROADMAPS.get(domain, default)
+
+    return dict(
+        current_level=f"{current_title} ({domain.replace('_', ' ').title()} domain)",
+        next_roles=roadmap["next_roles"],
+        roadmap_steps=roadmap["steps"],
         recommended_certifications=[],
-        skill_gaps=["Leadership and mentorship", "System design at scale", "Cross-team communication"],
-        timeline="12-24 months for next-level transition.",
+        skill_gaps=roadmap["skill_gaps"],
+        timeline="6-18 months for next-level transition.",
         youtube_channels=[],
         learning_resources=[
             dict(platform="Coursera", url=f"https://www.coursera.org/search?query={skill_query}", description="University-level courses"),
             dict(platform="Udemy", url=f"https://www.udemy.com/courses/search/?q={skill_query}", description="Affordable practical courses"),
+            dict(platform="LinkedIn Learning", url=f"https://www.linkedin.com/learning/search?keywords={skill_query}", description="Professional development courses"),
         ],
     )
 
@@ -253,50 +402,31 @@ def _deterministic_roadmap(content, current_title):
 # ---------------- Career roadmap ----------------
 
 def career_roadmap(content: ResumeContent, target_role=None) -> dict:
-    """Generate a career roadmap with certifications, skill gaps, and learning resources."""
+    """Generate a career roadmap with certifications, skill gaps, and learning resources.
+    Roadmap steps are enriched objects with timeframe, category, and explanation."""
     current_title = content.contact.title or (content.experience[0].title if content.experience else "Professional")
 
     if not client.available():
-        # Deterministic fallback
-        from urllib.parse import quote_plus
-        skill_query = quote_plus(current_title)
-        return dict(
-            current_level=current_title,
-            next_roles=[f"Senior {current_title}", f"Lead {current_title}", f"Staff {current_title}"],
-            roadmap_steps=[
-                "Deepen expertise in 1-2 core technologies.",
-                "Take on cross-functional or leadership projects.",
-                "Earn relevant industry certifications.",
-                "Build a portfolio of measurable achievements.",
-                "Network and seek mentorship in target domain.",
-            ],
-            recommended_certifications=[],
-            skill_gaps=["Leadership and mentorship", "System design at scale", "Cross-team communication"],
-            timeline="12-24 months for next-level transition.",
-            youtube_channels=[],
-            learning_resources=[
-                dict(platform="Coursera", url=f"https://www.coursera.org/search?query={skill_query}", description="University-level courses"),
-                dict(platform="Udemy", url=f"https://www.udemy.com/courses/search/?q={skill_query}", description="Affordable practical courses"),
-            ],
-        )
+        return _deterministic_roadmap(content, current_title)
 
-    # LLM-powered roadmap with structured JSON output
+    # LLM-powered roadmap — domain-aware prompts
+    domain_hint = _domain_context(content)
     system = (
-        "You are a senior career strategist and tech industry expert. "
-        "Create a concrete, actionable career roadmap with specific recommendations. "
-        "Include real certification names, real YouTube channels, and real course platform links."
+        "You are a senior career strategist with deep expertise across ALL professional domains. "
+        "Detect the candidate's field from their resume and create a domain-appropriate career roadmap. "
+        "Include real certification names, real learning resources, and specific actionable steps. "
+        "Every recommendation must be relevant to their actual profession — never default to tech/software advice."
     )
     prompt = (
-        f"Create a detailed career roadmap for this professional.\n"
-        f"Current role: {current_title}\n"
+        f"Create a detailed career roadmap. {domain_hint}\n"
         f"Target role: {target_role or 'next logical career step'}\n\n"
         f"RESUME JSON:\n{content.model_dump_json(indent=2)}\n\n"
         "Return a JSON object with these exact keys:\n"
         "- current_level: string (assessment of current career stage)\n"
-        "- next_roles: array of 3-4 strings (specific next job titles)\n"
-        "- roadmap_steps: array of 6-8 strings (concrete action items)\n"
+        "- next_roles: array of 3-4 strings (specific next job titles in their domain)\n"
+        "- roadmap_steps: array of 6-8 objects, each with: {\"text\": \"action item\", \"timeframe\": \"e.g. Month 1-3\", \"category\": \"Skills/Leadership/Credentials/Portfolio/Network/Visibility\", \"explanation\": \"2-3 sentences explaining WHY this matters for their specific career\"}\n"
         "- recommended_certifications: array of objects with keys: name, institution, description, udemy_url\n"
-        "- skill_gaps: array of 4-6 strings (skills to develop)\n"
+        "- skill_gaps: array of 4-6 strings (skills to develop for their domain)\n"
         "- timeline: string (realistic timeline for next transition)\n"
         "- youtube_channels: array of objects with keys: name, url, topic\n"
         "- learning_resources: array of objects with keys: platform, url, description\n\n"
@@ -304,10 +434,28 @@ def career_roadmap(content: ResumeContent, target_role=None) -> dict:
     )
     try:
         data = _gemini_complete_json(prompt, system=system, max_tokens=3000)
+        # Normalize roadmap_steps to always be objects
+        raw_steps = data.get("roadmap_steps", [])
+        roadmap_steps = []
+        for i, s in enumerate(raw_steps):
+            if isinstance(s, str):
+                roadmap_steps.append({
+                    "text": s,
+                    "timeframe": f"Step {i+1}",
+                    "category": "Growth",
+                    "explanation": "A focused action that moves you measurably toward your next career milestone.",
+                })
+            elif isinstance(s, dict):
+                roadmap_steps.append({
+                    "text": s.get("text", ""),
+                    "timeframe": s.get("timeframe", f"Step {i+1}"),
+                    "category": s.get("category", "Growth"),
+                    "explanation": s.get("explanation", "A focused action that moves you measurably toward your next career milestone."),
+                })
         return dict(
             current_level=data.get("current_level", current_title),
             next_roles=data.get("next_roles", [])[:6],
-            roadmap_steps=data.get("roadmap_steps", [])[:10],
+            roadmap_steps=roadmap_steps[:10],
             recommended_certifications=data.get("recommended_certifications", [])[:8],
             skill_gaps=data.get("skill_gaps", [])[:8],
             timeline=data.get("timeline", ""),
@@ -1179,112 +1327,69 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
 
 # 2. Mock Interview — 50+ scenario-based questions
 def mock_interview(content: ResumeContent, role: str = None, difficulty: str = "medium", question_count: int = 50, category: str = "all") -> dict:
-    """Generate 50+ interview questions organized by category."""
+    """Generate interview questions tailored to the candidate's actual role and domain.
+    Uses LLM to generate domain-relevant questions from the resume content."""
     from app.ai import gemini as gemini_client
-    target = role or content.contact.title or "Software Engineer"
+    target = role or content.contact.title or "Professional"
     skills = content.skills[:10]
-    primary = skills[0] if skills else "programming"
+    primary = skills[0] if skills else "your field"
     exp = [f"{e.title} at {e.company}" for e in content.experience[:3]]
     exp_years = max(len(content.experience) * 2, 1)
+    domain_hint = _domain_context(content)
 
-    # Build comprehensive question bank
+    # Universal behavioral questions that work for any domain
     behavioral = [
-        {"id":1,"type":"behavioral","category":"Leadership","question":"Tell me about a time you led a project with tight deadlines. How did you prioritize?","tips":"Use STAR. Show decision-making and delegation."},
-        {"id":2,"type":"behavioral","category":"Leadership","question":"Describe a time you mentored a junior team member who was struggling.","tips":"Show empathy, patience, and measurable improvement in their performance."},
-        {"id":3,"type":"behavioral","category":"Conflict","question":"Tell me about a disagreement with your manager. How did you handle it?","tips":"Show maturity — listen first, present data, find common ground."},
-        {"id":4,"type":"behavioral","category":"Conflict","question":"Describe a situation where two team members had conflicting approaches. How did you resolve it?","tips":"Show facilitation skills — acknowledge both views, find the best solution."},
-        {"id":5,"type":"behavioral","category":"Failure","question":"Tell me about your biggest professional failure. What did you learn?","tips":"Own the mistake, focus 70% on what you learned and changed."},
-        {"id":6,"type":"behavioral","category":"Failure","question":"Describe a project that didn't meet its goals. What would you do differently?","tips":"Show self-awareness and growth mindset."},
-        {"id":7,"type":"behavioral","category":"Achievement","question":"What's your proudest professional achievement? Walk me through it.","tips":"Pick one with measurable impact. Quantify the result."},
-        {"id":8,"type":"behavioral","category":"Achievement","question":"Tell me about a time you exceeded expectations on a deliverable.","tips":"Show initiative — what extra steps did you take?"},
-        {"id":9,"type":"behavioral","category":"Teamwork","question":"Describe a time you worked with a cross-functional team. What was your role?","tips":"Show collaboration across engineering, product, design, etc."},
-        {"id":10,"type":"behavioral","category":"Teamwork","question":"How do you handle a team member who isn't pulling their weight?","tips":"Show empathy first, then accountability with specific examples."},
-        {"id":11,"type":"behavioral","category":"Pressure","question":"Tell me about working under extreme pressure. How did you manage?","tips":"Show composure, prioritization, and successful delivery."},
-        {"id":12,"type":"behavioral","category":"Communication","question":"Describe a time you had to explain a complex technical concept to a non-technical stakeholder.","tips":"Show ability to simplify without losing accuracy."},
+        {"id":1,"type":"behavioral","category":"Leadership","question":"Tell me about a time you led a project or initiative with tight deadlines. How did you prioritize?","tips":"Use STAR format. Show decision-making and delegation."},
+        {"id":2,"type":"behavioral","category":"Leadership","question":"Describe a time you mentored or trained someone who was struggling. What was the outcome?","tips":"Show empathy, patience, and measurable improvement."},
+        {"id":3,"type":"behavioral","category":"Conflict","question":"Tell me about a disagreement with a colleague or supervisor. How did you handle it?","tips":"Show maturity — listen first, present your perspective, find common ground."},
+        {"id":4,"type":"behavioral","category":"Failure","question":"Tell me about your biggest professional failure. What did you learn?","tips":"Own the mistake, focus 70% on what you learned and changed."},
+        {"id":5,"type":"behavioral","category":"Achievement","question":"What's your proudest professional achievement? Walk me through it.","tips":"Pick one with measurable impact. Quantify the result."},
+        {"id":6,"type":"behavioral","category":"Teamwork","question":"Describe a time you worked with a team where members had different approaches. How did you collaborate?","tips":"Show facilitation skills — acknowledge different views, find the best solution."},
+        {"id":7,"type":"behavioral","category":"Pressure","question":"Tell me about working under extreme pressure. How did you manage?","tips":"Show composure, prioritization, and successful delivery."},
+        {"id":8,"type":"behavioral","category":"Communication","question":"Describe a time you had to explain a complex concept to someone outside your field.","tips":"Show ability to simplify without losing accuracy."},
+        {"id":9,"type":"behavioral","category":"Initiative","question":"Tell me about something you did without being asked that had a positive impact.","tips":"Show proactivity and ownership."},
+        {"id":10,"type":"behavioral","category":"Adaptability","question":"Describe a time when priorities changed suddenly. How did you adapt?","tips":"Show flexibility and positive attitude toward change."},
     ]
 
-    technical = [
-        {"id":13,"type":"technical","category":"System Design","question":f"Design a scalable notification system that handles 10M users using {primary}.","tips":"Cover: message queue, push/email/SMS channels, user preferences, rate limiting."},
-        {"id":14,"type":"technical","category":"System Design","question":"Design a URL shortener like bit.ly. Walk me through the architecture.","tips":"Cover: hashing, storage, redirection, analytics, cache layer."},
-        {"id":15,"type":"technical","category":"System Design","question":"How would you design a real-time chat application?","tips":"Cover: WebSockets, message persistence, presence, delivery guarantees."},
-        {"id":16,"type":"technical","category":"System Design","question":"Design an e-commerce platform's order processing pipeline.","tips":"Cover: order states, payment, inventory, retry logic, eventual consistency."},
-        {"id":17,"type":"technical","category":"System Design","question":"Design a content delivery network (CDN). How would you minimize latency?","tips":"Cover: edge nodes, cache invalidation, origin servers, DNS routing."},
-        {"id":18,"type":"technical","category":"Coding","question":f"How would you implement rate limiting in a {primary} API?","tips":"Discuss: token bucket, sliding window, Redis-based, middleware patterns."},
-        {"id":19,"type":"technical","category":"Coding","question":f"Write a function to find the longest substring without repeating characters.","tips":"Use sliding window technique. Discuss time/space complexity."},
-        {"id":20,"type":"technical","category":"Coding","question":"How would you implement a LRU cache from scratch?","tips":"Use doubly-linked list + hashmap. Explain O(1) get/put."},
-        {"id":21,"type":"technical","category":"Architecture","question":f"Explain microservices vs monolith. When would you choose each for {primary}?","tips":"Discuss team size, deployment, complexity, data consistency trade-offs."},
-        {"id":22,"type":"technical","category":"Architecture","question":"How do you handle database migrations in production without downtime?","tips":"Blue-green, rolling updates, backward-compatible migrations, feature flags."},
-        {"id":23,"type":"technical","category":"DevOps","question":"Walk me through your ideal CI/CD pipeline.","tips":"Source → build → test → stage → deploy. Include rollback strategy."},
-        {"id":24,"type":"technical","category":"DevOps","question":"How would you debug a production incident where API latency spiked 10x?","tips":"Monitoring → logs → traces → identify bottleneck → fix → postmortem."},
-        {"id":25,"type":"technical","category":"Database","question":"When would you choose SQL vs NoSQL? Give specific examples.","tips":"SQL: transactions, joins. NoSQL: scale, flexible schema, high write throughput."},
-        {"id":26,"type":"technical","category":"Database","question":"Explain database indexing. How do you decide what to index?","tips":"B-tree, hash index, composite. Index: WHERE/JOIN columns, not low-selectivity."},
-        {"id":27,"type":"technical","category":"Security","question":"How do you prevent SQL injection and XSS in your applications?","tips":"Parameterized queries, input sanitization, CSP headers, escape output."},
-        {"id":28,"type":"technical","category":"Security","question":"Explain OAuth2 flow. How would you implement authentication in a REST API?","tips":"Authorization code flow, JWT tokens, refresh tokens, RBAC."},
-    ]
+    # If Gemini is available, generate domain-specific questions
+    domain_questions = []
+    if gemini_client.available():
+        try:
+            prompt = (
+                f"Generate {min(question_count, 30)} unique, domain-specific interview questions for a {target} role.\n"
+                f"{domain_hint}\n"
+                f"Skills: {', '.join(skills)}\n"
+                f"Experience: {'; '.join(exp)}\n"
+                f"Difficulty: {difficulty}\n\n"
+                "Create questions that are SPECIFIC to this person's domain — NOT generic tech questions. "
+                "Include a mix of: technical/domain-knowledge, situational/scenario-based, role-specific, and culture-fit questions.\n"
+                f"Return JSON array: [{{\"id\":11,\"type\":\"technical\",\"category\":\"...\",\"question\":\"...\",\"tips\":\"...\"}}]"
+            )
+            extra = gemini_client.complete_json(
+                prompt,
+                system="You are an expert interview question designer across ALL professional domains. Generate questions specific to the candidate's actual field.",
+                max_tokens=3000,
+            )
+            if isinstance(extra, list):
+                for i, q in enumerate(extra):
+                    q["id"] = len(behavioral) + i + 1
+                domain_questions = extra
+        except Exception:
+            pass
 
-    situational = [
-        {"id":29,"type":"situational","category":"Decision Making","question":f"If you joined as {target}, what would your first 90 days look like?","tips":"Listen → Learn → Quick wins. Show strategic thinking."},
-        {"id":30,"type":"situational","category":"Decision Making","question":"Your team wants to adopt a new framework but the deadline is in 3 weeks. What do you do?","tips":"Assess risk, propose a phased approach, communicate trade-offs clearly."},
-        {"id":31,"type":"situational","category":"Decision Making","question":"You find a critical bug in production on a Friday evening. What's your process?","tips":"Severity assessment, quick fix vs rollback, communication, postmortem."},
-        {"id":32,"type":"situational","category":"Priority","question":"You have 3 urgent tasks from 3 different stakeholders. How do you prioritize?","tips":"Impact vs effort matrix, communicate timelines, negotiate deadlines."},
-        {"id":33,"type":"situational","category":"Priority","question":"Your sprint has 20 story points but the PM added 10 more mid-sprint. What do you do?","tips":"Push back with data, negotiate scope, protect team's sustainability."},
-        {"id":34,"type":"situational","category":"Ethics","question":"You discover a colleague is padding their work hours. How do you handle it?","tips":"Private conversation first, then escalate if needed. Focus on impact, not judgment."},
-        {"id":35,"type":"situational","category":"Ethics","question":"A client asks you to ship a feature you know has security vulnerabilities. What do you do?","tips":"Document the risk, propose alternatives, escalate to leadership if overruled."},
-        {"id":36,"type":"situational","category":"Innovation","question":"How would you introduce AI/ML capabilities into your current project?","tips":"Identify use cases with clear ROI, start with a POC, measure impact."},
-        {"id":37,"type":"situational","category":"Innovation","question":"Your tech stack is 5 years old. How would you propose modernization?","tips":"Incremental migration, strangler fig pattern, business case with metrics."},
-        {"id":38,"type":"situational","category":"Client","question":"A client is unhappy with the deliverable quality. How do you handle the conversation?","tips":"Acknowledge, apologize, action plan. Show ownership without making excuses."},
-    ]
-
-    role_specific = [
-        {"id":39,"type":"role_specific","category":f"{primary}","question":f"What are the key differences between {primary} and its alternatives? Why do you prefer it?","tips":"Show depth — discuss pros, cons, and when you'd choose differently."},
-        {"id":40,"type":"role_specific","category":f"{primary}","question":f"What's a common performance pitfall in {primary} and how do you avoid it?","tips":"Show real-world experience with profiling, optimization, and best practices."},
-        {"id":41,"type":"role_specific","category":"Culture Fit","question":"What kind of engineering culture do you thrive in?","tips":"Be genuine — discuss collaboration, autonomy, learning, code review preferences."},
-        {"id":42,"type":"role_specific","category":"Culture Fit","question":"How do you stay updated with new technologies?","tips":"Blogs, conferences, side projects, communities — be specific."},
-        {"id":43,"type":"role_specific","category":"Growth","question":"Where do you see yourself in 3-5 years?","tips":"Show ambition + realism. IC track or management — both are valid."},
-        {"id":44,"type":"role_specific","category":"Growth","question":"What's the most valuable feedback you've ever received?","tips":"Show self-awareness and how you acted on it."},
-        {"id":45,"type":"role_specific","category":"Motivation","question":"Why are you leaving your current role?","tips":"Growth-focused. NEVER badmouth current employer."},
-        {"id":46,"type":"role_specific","category":"Motivation","question":"What excites you about this role specifically?","tips":"Research the company. Mention specific projects/tech/values."},
-        {"id":47,"type":"role_specific","category":"Problem Solving","question":"Walk me through how you approach debugging a complex issue.","tips":"Reproduce → isolate → hypothesize → test → fix → prevent. Systematic approach."},
-        {"id":48,"type":"role_specific","category":"Problem Solving","question":"Describe the most complex technical problem you've solved.","tips":"Show depth of investigation, creativity, and measurable outcome."},
-        {"id":49,"type":"role_specific","category":"Estimation","question":"How do you estimate the effort for a new feature?","tips":"Break down into tasks, add buffer, consider unknowns. T-shirt sizing or story points."},
-        {"id":50,"type":"role_specific","category":"Estimation","question":"A task you estimated at 1 week is taking 3 weeks. What do you do?","tips":"Communicate early, identify blockers, re-scope if needed."},
-        {"id":51,"type":"role_specific","category":"Code Quality","question":"What does 'clean code' mean to you? Give examples.","tips":"Readable, testable, maintainable. SOLID principles, meaningful names, small functions."},
-        {"id":52,"type":"role_specific","category":"Code Quality","question":"How do you approach code reviews? What do you look for?","tips":"Correctness, readability, edge cases, performance, testing. Be constructive."},
-        {"id":53,"type":"role_specific","category":"Testing","question":"How much test coverage is enough? What types of tests do you write?","tips":"Unit > Integration > E2E. 80%+ coverage on critical paths. Test behavior, not implementation."},
-        {"id":54,"type":"role_specific","category":"Agile","question":"What's your experience with Agile/Scrum? What works and what doesn't?","tips":"Show practical experience — standups, retros, sprint planning. Be honest about pain points."},
-        {"id":55,"type":"role_specific","category":"Agile","question":"How do you handle changing requirements mid-sprint?","tips":"Assess impact, negotiate with PO, protect team velocity, document changes."},
-    ]
-
-    # Combine all questions
-    all_questions = behavioral + technical + situational + role_specific
+    all_questions = behavioral + domain_questions
 
     # Filter by category if specified
     if category != "all":
         cat_lower = category.lower()
         all_questions = [q for q in all_questions if q["type"] == cat_lower or q.get("category","").lower() == cat_lower]
 
-    # If Gemini is available, generate additional personalized questions
-    if gemini_client.available() and len(all_questions) < question_count:
-        try:
-            prompt = (
-                f"Generate 10 unique interview questions for a {target} role.\n"
-                f"Skills: {', '.join(skills)}\nExperience: {'; '.join(exp)}\n"
-                f"Mix of behavioral, technical, and situational. Make them specific to {primary}.\n"
-                f"Return JSON array: [{{\"id\":56,\"type\":\"technical\",\"category\":\"...\",\"question\":\"...\",\"tips\":\"...\"}}]"
-            )
-            extra = gemini_client.complete_json(prompt, system="Generate interview questions. Return JSON array only.", max_tokens=2000)
-            if isinstance(extra, list):
-                for i, q in enumerate(extra):
-                    q["id"] = len(all_questions) + i + 1
-                    all_questions.append(q)
-        except Exception:
-            pass
-
     # Limit to requested count
     questions = all_questions[:min(question_count, len(all_questions))]
 
     # Get unique categories for filtering
     categories = sorted(set(q.get("category","") for q in all_questions if q.get("category")))
+    types = sorted(set(q.get("type","") for q in all_questions if q.get("type")))
 
     return {
         "role": target,
@@ -1292,7 +1397,7 @@ def mock_interview(content: ResumeContent, role: str = None, difficulty: str = "
         "total_questions": len(all_questions),
         "questions": questions,
         "categories": categories,
-        "types": ["behavioral","technical","situational","role_specific"],
+        "types": types,
     }
 
 
@@ -1485,246 +1590,80 @@ def generate_otp() -> str:
 
 # ─────────────────────────────────────────────────────────────
 # Trending Jobs
-# ─────────────────────────────────────────────────────────────
-
-TRENDING_JOBS_DB = {
-    "software_engineer": [
-        dict(
-            title="Senior Full-Stack Engineer (AI-integrated)",
-            category="Software Engineering",
-            demand_level="🔥 Very High",
-            avg_salary="₹25-50 LPA",
-            description="Build AI-powered web products. Companies are rapidly integrating LLMs into their core products and need engineers who can bridge traditional web engineering with AI/ML APIs.",
-            tech_stack=["React / Next.js", "Node.js / FastAPI", "OpenAI / Anthropic APIs", "PostgreSQL", "Redis", "Docker", "AWS / GCP"],
-            match_score=85,
-            certifications=[
-                dict(name="AWS Certified Developer – Associate", provider="Amazon Web Services",
-                     url="https://aws.amazon.com/certification/certified-developer-associate/"),
-                dict(name="Meta Front-End Developer Certificate", provider="Meta via Coursera",
-                     url="https://www.coursera.org/professional-certificates/meta-front-end-developer"),
-                dict(name="Full Stack Development Bootcamp", provider="Scaler Academy",
-                     url="https://www.scaler.com/courses/full-stack-developer/"),
-            ],
-            hiring_companies=[
-                dict(name="Anthropic"), dict(name="Google DeepMind"), dict(name="Flipkart"),
-                dict(name="Meesho"), dict(name="Razorpay"), dict(name="Zepto"),
-            ],
-        ),
-        dict(
-            title="Backend Engineer – Distributed Systems",
-            category="Software Engineering",
-            demand_level="🔥 Very High",
-            avg_salary="₹20-45 LPA",
-            description="Design and scale backend infrastructure handling millions of requests. Companies like Zomato, Swiggy, PhonePe are constantly scaling their systems to handle India's internet growth.",
-            tech_stack=["Go / Rust / Java", "Kafka / RabbitMQ", "Kubernetes", "gRPC", "Cassandra / ScyllaDB", "Prometheus / Grafana"],
-            match_score=78,
-            certifications=[
-                dict(name="Certified Kubernetes Administrator (CKA)", provider="CNCF",
-                     url="https://www.cncf.io/certification/cka/"),
-                dict(name="System Design Interview Course", provider="Scaler",
-                     url="https://www.scaler.com/courses/system-design/"),
-            ],
-            hiring_companies=[
-                dict(name="Zomato"), dict(name="PhonePe"), dict(name="Swiggy"),
-                dict(name="CRED"), dict(name="Groww"), dict(name="Juspay"),
-            ],
-        ),
-    ],
-    "data": [
-        dict(
-            title="Data Scientist / ML Engineer",
-            category="Data & AI",
-            demand_level="🔥 Very High",
-            avg_salary="₹18-40 LPA",
-            description="Build and productionize ML models. 2025-26 sees explosive demand for engineers who can take models from notebook to production — model serving, feature stores, and MLOps.",
-            tech_stack=["Python", "PyTorch / TensorFlow", "Scikit-learn", "MLflow / W&B", "Spark", "Airflow", "AWS SageMaker"],
-            match_score=80,
-            certifications=[
-                dict(name="TensorFlow Developer Certificate", provider="Google",
-                     url="https://www.tensorflow.org/certificate"),
-                dict(name="AWS Machine Learning Specialty", provider="AWS",
-                     url="https://aws.amazon.com/certification/certified-machine-learning-specialty/"),
-                dict(name="IBM Data Science Professional Certificate", provider="IBM via Coursera",
-                     url="https://www.coursera.org/professional-certificates/ibm-data-science"),
-            ],
-            hiring_companies=[
-                dict(name="Google"), dict(name="Microsoft"), dict(name="Amazon"),
-                dict(name="Sarvam AI"), dict(name="Krutrim"), dict(name="Wadhwani AI"),
-            ],
-        ),
-        dict(
-            title="Analytics Engineer / Data Platform",
-            category="Data Engineering",
-            demand_level="High",
-            avg_salary="₹15-32 LPA",
-            description="Bridge between raw data and business insights. dbt, modern data stacks, and real-time analytics are transforming how companies use data. High demand from e-commerce and fintech.",
-            tech_stack=["dbt", "Snowflake / BigQuery", "Airflow", "Kafka", "Looker / Metabase", "Python", "Spark"],
-            match_score=72,
-            certifications=[
-                dict(name="dbt Analytics Engineering Certification", provider="dbt Labs",
-                     url="https://www.getdbt.com/certifications/analytics-engineer/"),
-                dict(name="Google Cloud Professional Data Engineer", provider="Google Cloud",
-                     url="https://cloud.google.com/certification/data-engineer"),
-            ],
-            hiring_companies=[
-                dict(name="Razorpay"), dict(name="Myntra"), dict(name="Urban Company"),
-                dict(name="Nykaa"), dict(name="ShareChat"),
-            ],
-        ),
-    ],
-    "devops": [
-        dict(
-            title="Platform / DevOps Engineer",
-            category="Infrastructure & DevOps",
-            demand_level="🔥 Very High",
-            avg_salary="₹20-45 LPA",
-            description="Build developer platforms, CI/CD pipelines, and cloud infrastructure. Platform engineering is the fastest growing discipline in tech — every startup building at scale needs this.",
-            tech_stack=["Kubernetes", "Terraform", "ArgoCD", "GitHub Actions", "Prometheus / Grafana", "AWS / GCP / Azure", "Helm"],
-            match_score=82,
-            certifications=[
-                dict(name="Certified Kubernetes Administrator (CKA)", provider="CNCF",
-                     url="https://www.cncf.io/certification/cka/"),
-                dict(name="HashiCorp Terraform Associate", provider="HashiCorp",
-                     url="https://www.hashicorp.com/certifications/terraform-associate"),
-                dict(name="AWS DevOps Engineer Professional", provider="AWS",
-                     url="https://aws.amazon.com/certification/certified-devops-engineer-professional/"),
-            ],
-            hiring_companies=[
-                dict(name="Atlassian"), dict(name="Harness"), dict(name="Postman"),
-                dict(name="Freshworks"), dict(name="Hasura"), dict(name="Dgraph Labs"),
-            ],
-        ),
-    ],
-    "ai": [
-        dict(
-            title="LLM / Generative AI Engineer",
-            category="Generative AI",
-            demand_level="🔥 Explosive",
-            avg_salary="₹30-80 LPA",
-            description="The hottest role of 2025-26. Build RAG pipelines, fine-tune LLMs, design prompt engineering frameworks, and deploy AI agents. India's AI startups are hiring at a premium.",
-            tech_stack=["LangChain / LlamaIndex", "OpenAI / Anthropic / Gemini APIs", "Vector DBs (Pinecone, Weaviate)", "Python", "FastAPI", "HuggingFace", "RLHF"],
-            match_score=70,
-            certifications=[
-                dict(name="DeepLearning.AI LLM Specialization", provider="Coursera + DeepLearning.AI",
-                     url="https://www.coursera.org/specializations/large-language-models"),
-                dict(name="Generative AI with LLMs", provider="AWS + DeepLearning.AI",
-                     url="https://www.coursera.org/learn/generative-ai-with-llms"),
-                dict(name="Prompt Engineering for Developers", provider="DeepLearning.AI (Free)",
-                     url="https://www.deeplearning.ai/short-courses/chatgpt-prompt-engineering-for-developers/"),
-            ],
-            hiring_companies=[
-                dict(name="Anthropic"), dict(name="Sarvam AI"), dict(name="Krutrim"),
-                dict(name="Ola Krutrim"), dict(name="Fractal Analytics"), dict(name="Tiger Analytics"),
-            ],
-        ),
-    ],
-    "management": [
-        dict(
-            title="Engineering Manager / Tech Lead",
-            category="Leadership",
-            demand_level="High",
-            avg_salary="₹35-80 LPA",
-            description="Lead engineering teams of 6-15 people. Companies scaling from Series B onwards are actively searching for EMs who can ship fast, build culture, and communicate with business stakeholders.",
-            tech_stack=["Jira / Linear", "System Design", "OKR frameworks", "1:1 best practices", "DORA metrics", "Tech roadmapping"],
-            match_score=65,
-            certifications=[
-                dict(name="PMP – Project Management Professional", provider="PMI",
-                     url="https://www.pmi.org/certifications/project-management-pmp"),
-                dict(name="Professional Scrum Master (PSM I)", provider="Scrum.org",
-                     url="https://www.scrum.org/assessments/professional-scrum-master-i-certification"),
-                dict(name="Engineering Leadership Program", provider="Scaler",
-                     url="https://www.scaler.com/courses/engineering-manager/"),
-            ],
-            hiring_companies=[
-                dict(name="Atlassian"), dict(name="Notion"), dict(name="Stripe"),
-                dict(name="Zepto"), dict(name="BrowserStack"), dict(name="Postman"),
-            ],
-        ),
-    ],
-    "security": [
-        dict(
-            title="Application Security Engineer",
-            category="Cybersecurity",
-            demand_level="High",
-            avg_salary="₹20-45 LPA",
-            description="India's cybersecurity market is growing at 15.6% CAGR. AppSec engineers who can shift-left security into DevOps pipelines (DevSecOps) are extremely scarce and highly paid.",
-            tech_stack=["SAST / DAST tools", "Burp Suite", "OWASP Top 10", "Snyk / Semgrep", "AWS Security Hub", "Penetration Testing", "Zero Trust Architecture"],
-            match_score=60,
-            certifications=[
-                dict(name="CEH – Certified Ethical Hacker", provider="EC-Council",
-                     url="https://www.eccouncil.org/programs/certified-ethical-hacker-ceh/"),
-                dict(name="CompTIA Security+", provider="CompTIA",
-                     url="https://www.comptia.org/certifications/security"),
-                dict(name="OSCP – Offensive Security Certified Professional", provider="Offensive Security",
-                     url="https://www.offsec.com/courses/pen-200/"),
-            ],
-            hiring_companies=[
-                dict(name="Razorpay"), dict(name="HDFC Bank Tech"), dict(name="Paytm"),
-                dict(name="Zscaler"), dict(name="Palo Alto Networks"), dict(name="Wipro CyberSec"),
-            ],
-        ),
-    ],
-}
-
 def trending_jobs(content: ResumeContent) -> dict:
-    """Return trending job roles matching the resume skills and experience."""
+    """Return trending job roles matching the resume skills and experience.
+    Always uses LLM for domain-relevant results."""
     skills_text  = " ".join(s.lower() for s in content.skills)
     title_text   = (content.contact.title or "").lower()
-    bullets_text = " ".join(b.lower() for e in content.experience for b in e.bullets)
-    all_text     = skills_text + " " + title_text + " " + bullets_text
+    domain_hint = _domain_context(content)
 
-    selected = []
+    if not client.available():
+        return {
+            "jobs": [],
+            "market_insight": f"AI key not configured. Set GEMINI_API_KEY or ANTHROPIC_API_KEY to get personalized trending job recommendations for your field.",
+        }
 
-    # Pick the most relevant categories
-    if any(t in all_text for t in ["generative ai", "llm", "langchain", "gpt", "anthropic", "openai", "rag"]):
-        selected += TRENDING_JOBS_DB["ai"]
-    if any(t in all_text for t in ["python", "javascript", "react", "node", "java", "fastapi", "django", "backend", "frontend", "fullstack", "full-stack", "full stack"]):
-        selected += TRENDING_JOBS_DB["software_engineer"]
-    if any(t in all_text for t in ["data", "machine learning", "ml", "tensorflow", "pytorch", "pandas", "spark", "analytics"]):
-        selected += TRENDING_JOBS_DB["data"]
-    if any(t in all_text for t in ["devops", "kubernetes", "docker", "terraform", "ci/cd", "jenkins", "aws", "gcp", "azure", "cloud", "infrastructure"]):
-        selected += TRENDING_JOBS_DB["devops"]
-    if any(t in all_text for t in ["manager", "lead", "management", "team lead", "engineering manager", "scrum", "agile"]):
-        selected += TRENDING_JOBS_DB["management"]
-    if any(t in all_text for t in ["security", "cybersecurity", "penetration", "appsec", "devsecops"]):
-        selected += TRENDING_JOBS_DB["security"]
-
-    # Fallback — if nothing matched, show general top roles
-    if not selected:
-        selected = TRENDING_JOBS_DB["software_engineer"] + TRENDING_JOBS_DB["ai"]
-
-    # Deduplicate and limit
-    seen, unique = set(), []
-    for j in selected:
-        if j["title"] not in seen:
-            seen.add(j["title"])
-            unique.append(j)
-
-    market_insight = (
-        "India's tech hiring market in 2025-26 is characterised by two parallel trends: "
-        "AI/ML roles are commanding 40-60% salary premiums over equivalent non-AI roles, while "
-        "backend and platform engineering continue strong demand driven by India's 850M+ internet user growth. "
-        "Roles that combine domain expertise with AI tool fluency are the fastest to fill and highest paid. "
-        "Companies are increasingly bypassing traditional job boards — 65% of senior hires happen through LinkedIn "
-        "and internal referrals. Building a strong GitHub profile and technical blog dramatically improves inbound recruiter interest."
+    system = (
+        "You are a hiring market analyst with deep knowledge of job markets across ALL industries and domains. "
+        "Detect the candidate's professional domain from their resume and recommend trending roles in THEIR field. "
+        "Never default to tech/software roles unless the resume is actually in tech."
     )
-
-    if client.available():
-        system = "You are a tech hiring market analyst with deep knowledge of India's tech ecosystem in 2026."
-        prompt = (
-            f"Resume skills: {skills_text[:300]}\n"
-            f"Current title: {title_text}\n\n"
-            "Based on this professional's background, list the top 4 trending job roles most relevant to them in India's 2026 tech market.\n"
-            "For each role include: title, category, demand_level, avg_salary (INR), description (2-3 sentences on WHY it's trending), "
-            "tech_stack (list of 6-8 technologies), match_score (0-100), "
-            "certifications (list of 3, each with name+provider+url), "
-            "hiring_companies (list of 6 company objects with name).\n"
-            "Also include a market_insight string (2-3 sentences on overall India tech job market 2026).\n"
-            'Return ONLY JSON: {"jobs": [...], "market_insight": "..."}'
-        )
-        try:
-            return client.complete_json(prompt, system=system, max_tokens=2500)
-        except Exception:
-            pass
-
-    return {"jobs": unique[:4], "market_insight": market_insight}
+    prompt = (
+        f"Based on this professional's background, list the top 4 trending job roles most relevant to them.\n"
+        f"{domain_hint}\n"
+        f"Skills: {skills_text[:300]}\n"
+        f"Current title: {title_text}\n\n"
+        "For each role include: title, category, demand_level, avg_salary (INR), "
+        "description (2-3 sentences on WHY it's trending in their domain), "
+        "tech_stack or key_tools (list of 6-8 items relevant to their field), match_score (0-100), "
+        "certifications (list of 3, each with name+provider+url), "
+        "hiring_companies (list of 6 company objects with name).\n"
+        "Also include a market_insight string (2-3 sentences on the job market in their specific domain for 2025-26).\n"
+        'Return ONLY JSON: {"jobs": [...], "market_insight": "..."}'
+    )
+    try:
+        data = client.complete_json(prompt, system=system, max_tokens=2500)
+        # Normalize jobs to ensure consistent schema regardless of LLM output quirks
+        normalized_jobs = []
+        for job in data.get("jobs", []):
+            # Normalize certifications: ensure `url` field exists
+            certs = job.get("certifications", [])
+            normalized_certs = []
+            for cert in certs:
+                if isinstance(cert, dict):
+                    normalized_certs.append({
+                        "name": cert.get("name", ""),
+                        "provider": cert.get("provider", ""),
+                        "url": cert.get("url") or cert.get("udemy_url") or cert.get("coursera_url") or "",
+                    })
+                elif isinstance(cert, str):
+                    normalized_certs.append({"name": cert, "provider": "", "url": ""})
+            # Normalize hiring_companies: ensure objects with `name` field
+            companies = job.get("hiring_companies", [])
+            normalized_companies = []
+            for co in companies:
+                if isinstance(co, dict):
+                    normalized_companies.append({"name": co.get("name", co.get("company", ""))})
+                elif isinstance(co, str):
+                    normalized_companies.append({"name": co})
+            normalized_jobs.append({
+                "title": job.get("title", ""),
+                "category": job.get("category", ""),
+                "demand_level": job.get("demand_level", "High Demand"),
+                "avg_salary": job.get("avg_salary", ""),
+                "description": job.get("description", ""),
+                "tech_stack": job.get("tech_stack") or job.get("key_tools") or [],
+                "match_score": job.get("match_score", 0),
+                "certifications": normalized_certs,
+                "hiring_companies": normalized_companies,
+            })
+        return {
+            "jobs": normalized_jobs,
+            "market_insight": data.get("market_insight", ""),
+        }
+    except Exception as e:
+        logger.warning("AI trending jobs failed: %s", e)
+        return {
+            "jobs": [],
+            "market_insight": "AI service temporarily unavailable. Please try again in a moment.",
+        }

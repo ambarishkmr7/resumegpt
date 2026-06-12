@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-GEMINI_URL    = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_URL    = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
 GROK_URL      = "https://api.x.ai/v1/chat/completions"
 
 # HTTP status codes that mean "quota exhausted / overloaded — try next provider"

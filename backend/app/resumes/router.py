@@ -34,6 +34,26 @@ settings = get_settings()
 storage = StorageService(settings)
 
 
+def _normalize_roadmap(roadmap: dict) -> dict:
+    """Ensure roadmap_steps items are dicts, not plain strings.
+    Handles legacy cached data where steps were stored as strings."""
+    steps = roadmap.get("roadmap_steps")
+    if steps and isinstance(steps, list):
+        coerced = []
+        for i, s in enumerate(steps):
+            if isinstance(s, str):
+                coerced.append({
+                    "text": s,
+                    "timeframe": f"Step {i + 1}",
+                    "category": "Growth",
+                    "explanation": "A focused action that moves you measurably toward your next career milestone.",
+                })
+            else:
+                coerced.append(s)
+        roadmap["roadmap_steps"] = coerced
+    return roadmap
+
+
 def _get_owned(resume_id: str, user: User, db: Session) -> Resume:
     r = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user.id).first()
     if not r:
@@ -261,10 +281,10 @@ def roadmap(payload: CareerRoadmapRequest, user: User = Depends(get_current_user
         r = _get_owned(payload.resume_id, user, db)
         if r.career_roadmap:
             logger.info("Returning cached career roadmap for resume %s", payload.resume_id)
-            return CareerRoadmapResponse(**r.career_roadmap)
+            return CareerRoadmapResponse(**_normalize_roadmap(r.career_roadmap))
         # Generate and cache
         try:
-            result = ai_services.career_roadmap(payload.content, payload.target_role)
+            result = _normalize_roadmap(ai_services.career_roadmap(payload.content, payload.target_role))
             r.career_roadmap = result
             db.commit()
             return CareerRoadmapResponse(**result)
@@ -273,7 +293,7 @@ def roadmap(payload: CareerRoadmapRequest, user: User = Depends(get_current_user
             raise HTTPException(status_code=500, detail=f"Roadmap failed: {e}")
     # No resume_id — just generate without caching
     try:
-        result = ai_services.career_roadmap(payload.content, payload.target_role)
+        result = _normalize_roadmap(ai_services.career_roadmap(payload.content, payload.target_role))
         return CareerRoadmapResponse(**result)
     except Exception as e:
         logger.error("Career roadmap failed: %s", e, exc_info=True)

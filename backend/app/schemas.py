@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 # ---------- Normalized resume content (the core data contract) ----------
@@ -202,10 +202,21 @@ class CareerAnalysisRequest(BaseModel):
     resume_id: Optional[str] = None  # If provided, cache result in DB
 
 
+class WeaknessItem(BaseModel):
+    text: str = ""
+    urgency: str = "Medium Priority"  # "High Priority" | "Medium Priority" | "Low Priority"
+
+
+class RecommendationItem(BaseModel):
+    text: str = ""
+    impact: str = "Strategic"  # "High Impact" | "Quick Win" | "Long-term" | "Critical" | "Strategic"
+    why_it_matters: str = ""
+
+
 class CareerAnalysisResponse(BaseModel):
     strengths: List[str] = Field(default_factory=list)
-    weaknesses: List[str] = Field(default_factory=list)
-    recommendations: List[str] = Field(default_factory=list)
+    weaknesses: List[WeaknessItem] = Field(default_factory=list)
+    recommendations: List[RecommendationItem] = Field(default_factory=list)
     overall_assessment: str = ""
 
 
@@ -234,15 +245,44 @@ class LearningResource(BaseModel):
     description: str = ""
 
 
+class RoadmapStepItem(BaseModel):
+    text: str = ""
+    timeframe: str = ""
+    category: str = "Growth"  # Skills | Leadership | Credentials | Portfolio | Network | Visibility | Mentoring | Strategy | Execution | Growth
+    explanation: str = ""
+
+
 class CareerRoadmapResponse(BaseModel):
     current_level: str = ""
     next_roles: List[str] = Field(default_factory=list)
-    roadmap_steps: List[str] = Field(default_factory=list)
+    roadmap_steps: List[RoadmapStepItem] = Field(default_factory=list)
     recommended_certifications: List[CertificationDetail] = Field(default_factory=list)
     skill_gaps: List[str] = Field(default_factory=list)
     timeline: str = ""
     youtube_channels: List[YouTubeChannel] = Field(default_factory=list)
     learning_resources: List[LearningResource] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_roadmap_steps(cls, data: Any) -> Any:
+        """Ensure roadmap_steps items are dicts, not plain strings.
+        Handles legacy cached data where steps were stored as strings."""
+        if isinstance(data, dict):
+            steps = data.get("roadmap_steps")
+            if steps and isinstance(steps, list):
+                coerced = []
+                for i, s in enumerate(steps):
+                    if isinstance(s, str):
+                        coerced.append({
+                            "text": s,
+                            "timeframe": f"Step {i + 1}",
+                            "category": "Growth",
+                            "explanation": "A focused action that moves you measurably toward your next career milestone.",
+                        })
+                    else:
+                        coerced.append(s)
+                data["roadmap_steps"] = coerced
+        return data
 
 
 class JobSuggestion(BaseModel):
