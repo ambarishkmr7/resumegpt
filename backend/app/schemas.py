@@ -74,7 +74,7 @@ class ResumeContent(BaseModel):
     references: List[ReferenceItem] = Field(default_factory=list)
     custom_sections: List[CustomSection] = Field(default_factory=list)
     section_order: List[str] = Field(default_factory=lambda: [
-        "summary", "contact", "skills", "core_competencies", "certifications",
+        "summary", "contact", "skill_ratings", "skills", "core_competencies", "certifications",
         "experience", "education", "accomplishments", "languages",
         "projects", "activities", "references",
     ])

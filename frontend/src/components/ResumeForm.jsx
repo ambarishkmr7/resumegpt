@@ -55,7 +55,7 @@ function ChipEditor({ items, onChange, placeholder }) {
   return (
     <div className="chip-editor">
       <div className="chips">{items.map((s, i) => (
-        <span key={i} className="chip">{s}<button className="chip-x" onClick={() => onChange(items.filter((_, j) => j !== i))}>×</button></span>
+        <span key={i} className="chip">{typeof s === 'string' ? s : (s.name || s.title || JSON.stringify(s))}<button className="chip-x" onClick={() => onChange(items.filter((_, j) => j !== i))}>×</button></span>
       ))}</div>
       <div className="chip-input-row">
         <input value={input} onChange={(e) => setInput(e.target.value)}

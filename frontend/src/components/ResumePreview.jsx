@@ -45,8 +45,8 @@ function SkillStars({ items }) {
     <div className="pv-skill-stars">
       {items.map((s, i) => (
         <div key={i} className="pv-skill-star-row">
-          <span className="pv-skill-name">{s.name}</span>
-          <span className="pv-stars">{"★".repeat(s.rating)}{"☆".repeat(5 - s.rating)}</span>
+          <span className="pv-skill-name">{s.name || (typeof s === 'string' ? s : JSON.stringify(s))}</span>
+          <span className="pv-stars">{"★".repeat(Math.min(5, Math.max(0, s.rating || 0)))}{"☆".repeat(5 - Math.min(5, Math.max(0, s.rating || 0)))}</span>
         </div>
       ))}
     </div>
@@ -54,19 +54,33 @@ function SkillStars({ items }) {
 }
 function References({ items }) {
   if (!has(items)) return null;
-  return items.map((r, i) => (
-    <div className="pv-entry" key={i}>
-      <div className="pv-role">{r.name}</div>
-      <div className="pv-sub">{[r.title, r.company].filter(Boolean).join(", ")}</div>
-      {r.contact && <div className="pv-sub">{r.contact}</div>}
-    </div>
-  ));
+  return items.map((r, i) => {
+    const name = typeof r === 'string' ? r : (r.name || '');
+    const title = typeof r === 'string' ? '' : (r.title || '');
+    const company = typeof r === 'string' ? '' : (r.company || '');
+    const contact = typeof r === 'string' ? '' : (r.contact || '');
+    return (
+      <div className="pv-entry" key={i}>
+        <div className="pv-role">{name}</div>
+        <div className="pv-sub">{[title, company].filter(Boolean).join(", ")}</div>
+        {contact && <div className="pv-sub">{contact}</div>}
+      </div>
+    );
+  });
 }
-function InlineList({ items }) { return has(items) ? <div className="pv-skills-inline">{items.join("  •  ")}</div> : null; }
+function InlineList({ items }) {
+  if (!has(items)) return null;
+  const strs = items.map(s => typeof s === 'string' ? s : (s.name || s.title || JSON.stringify(s)));
+  return <div className="pv-skills-inline">{strs.join("  •  ")}</div>;
+}
 function Chips({ items }) {
-  return has(items) ? <div className="pv-chips">{items.map((s,i) => <span className="pv-chip" key={i}>{s}</span>)}</div> : null;
+  if (!has(items)) return null;
+  return <div className="pv-chips">{items.map((s,i) => <span className="pv-chip" key={i}>{typeof s === 'string' ? s : (s.name || s.title || JSON.stringify(s))}</span>)}</div>;
 }
-function BulletList({ items }) { return has(items) ? <ul>{items.map((x,i) => <li key={i}>{x}</li>)}</ul> : null; }
+function BulletList({ items }) {
+  if (!has(items)) return null;
+  return <ul>{items.map((x,i) => <li key={i}>{typeof x === 'string' ? x : (x.name || x.title || JSON.stringify(x))}</li>)}</ul>;
+}
 
 function Section({ title, show, children }) {
   if (!show) return null;
@@ -118,8 +132,8 @@ function SidebarContent({ content, sidebarKeys }) {
           <div className="pv-aside-block" key={key}>
             <h3>{SECTION_LABELS[key] || key}</h3>
             {key === "skill_ratings" ? items.map((s,i) => (
-              <div key={i} className="pv-aside-line"><span>{s.name}</span> <span className="pv-stars-sm">{"★".repeat(s.rating)}{"☆".repeat(5-s.rating)}</span></div>
-            )) : items.map((s,i) => <div key={i} className="pv-aside-line">{typeof s === 'string' ? s : s.name}</div>)}
+              <div key={i} className="pv-aside-line"><span>{s.name || s}</span> <span className="pv-stars-sm">{"★".repeat(Math.min(5, Math.max(0, s.rating || 0)))}{"☆".repeat(5 - Math.min(5, Math.max(0, s.rating || 0)))}</span></div>
+            )) : items.map((s,i) => <div key={i} className="pv-aside-line">{typeof s === 'string' ? s : (s.name || s.title || JSON.stringify(s))}</div>)}
           </div>
         );
       })}

@@ -68,6 +68,16 @@ _RESPONSE_SCHEMA = {
             },
         },
         "skills": {"type": "array", "items": {"type": "string"}},
+        "skill_ratings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "rating": {"type": "integer", "minimum": 1, "maximum": 5},
+                },
+            },
+        },
         "projects": {
             "type": "array",
             "items": {
@@ -157,6 +167,12 @@ _EXAMPLE = {
         },
     ],
     "skills": ["Python", "Go", "Kubernetes", "AWS", "PostgreSQL", "Redis", "Kafka", "Docker"],
+    "skill_ratings": [
+        {"name": "Python", "rating": 5},
+        {"name": "Kubernetes", "rating": 4},
+        {"name": "AWS", "rating": 4},
+        {"name": "PostgreSQL", "rating": 3},
+    ],
     "projects": [
         {
             "name": "OpenSource CLI Tool",
@@ -197,6 +213,8 @@ def _build_prompt() -> str:
         "- For education: extract degree, school, location, dates, details.\n"
         "- For projects: extract name, description, and bullet points.\n"
         "- For skills: flat list of individual skill strings.\n"
+        "- For skill_ratings: array of objects with 'name' (string) and 'rating' (integer 1-5). "
+        "Derive ratings from years of experience, frequency of mention, and seniority of use.\n"
         "- For certifications/languages/accomplishments/activities: flat list of strings.\n"
         "- If a section is not present, return empty array [] or empty string "".\n"
         "- Do NOT invent or fabricate any information.\n"
