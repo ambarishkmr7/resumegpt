@@ -864,6 +864,22 @@ def generate_sample_resume(job_title: str, years_experience: int, name: str) -> 
             )
             ai_content = client.complete_json(prompt, system=system, max_tokens=3000)
             if isinstance(ai_content, dict) and "contact" in ai_content:
+                # Normalize certifications: ensure each item is a string
+                certs = ai_content.get("certifications", [])
+                if certs and isinstance(certs[0], dict):
+                    ai_content["certifications"] = [
+                        f"{c.get('name', c.get('title', ''))} ({c.get('year', c.get('date', ''))})".strip(" ()")
+                        if isinstance(c, dict) else str(c)
+                        for c in certs
+                    ]
+                # Normalize references: ensure each item is a dict with name/title/company/contact
+                refs = ai_content.get("references", [])
+                if refs and isinstance(refs[0], str):
+                    ai_content["references"] = [
+                        {"name": r, "title": "", "company": "", "contact": ""}
+                        if isinstance(r, str) else r
+                        for r in refs
+                    ]
                 return ai_content
         except Exception:
             pass

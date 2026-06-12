@@ -79,6 +79,37 @@ class ResumeContent(BaseModel):
         "projects", "activities", "references",
     ])
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_ai_output(cls, data):
+        """Normalize AI-generated content to match the expected schema."""
+        if isinstance(data, dict):
+            # Normalize certifications: convert objects to strings
+            certs = data.get("certifications")
+            if certs and isinstance(certs, list):
+                normalized = []
+                for c in certs:
+                    if isinstance(c, dict):
+                        name = c.get("name", c.get("title", ""))
+                        year = c.get("year", c.get("date", ""))
+                        normalized.append(f"{name} ({year})".strip(" ()") if year else str(name))
+                    else:
+                        normalized.append(str(c))
+                data["certifications"] = normalized
+
+            # Normalize references: convert strings to ReferenceItem dicts
+            refs = data.get("references")
+            if refs and isinstance(refs, list):
+                normalized = []
+                for r in refs:
+                    if isinstance(r, str):
+                        normalized.append({"name": r, "title": "", "company": "", "contact": ""})
+                    else:
+                        normalized.append(r)
+                data["references"] = normalized
+
+        return data
+
 
 # ---------- Auth ----------
 
