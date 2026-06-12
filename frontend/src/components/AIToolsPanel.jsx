@@ -102,19 +102,19 @@ export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
             </ul>
           </div>
 
-          {/* Areas for Improvement — rich cards */}
+          {/* Areas for Improvement — rich cards with urgency from backend */}
           <div className="ai-section">
             <h4>🎯 Areas for Improvement</h4>
             {analysis.weaknesses?.map((w, i) => (
-              <ImprovementCard key={i} text={w} index={i} />
+              <ImprovementCard key={i} text={typeof w === 'string' ? w : w.text} urgency={typeof w === 'object' ? w.urgency : "Medium Priority"} index={i} />
             ))}
           </div>
 
-          {/* Recommendations — numbered with explanation */}
+          {/* Recommendations — with impact & why_it_matters from backend */}
           <div className="ai-section">
             <h4>✅ Recommendations</h4>
             {analysis.recommendations?.map((r, i) => (
-              <RecommendationCard key={i} text={r} index={i} />
+              <RecommendationCard key={i} text={typeof r === 'string' ? r : r.text} impact={typeof r === 'object' ? r.impact : "Strategic"} whyItMatters={typeof r === 'object' ? r.why_it_matters : ""} index={i} />
             ))}
           </div>
 
@@ -154,10 +154,7 @@ export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 14 }}>{r}</div>
                   <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>
-                    {["Typically requires 1-2 years of growth in current role",
-                      "Cross-team leadership and system ownership required",
-                      "Strategic influence, architecture decisions, team building",
-                      "Executive-level scope and org-wide impact"][i] || "Continued growth and specialization"}
+                    Continued growth and specialization in your field.
                   </div>
                 </div>
               </div>
@@ -167,7 +164,7 @@ export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
           <div className="ai-section">
             <h4>🗺️ Detailed Roadmap</h4>
             {roadmap.roadmap_steps?.map((s, i) => (
-              <RoadmapStep key={i} text={s} index={i} />
+              <RoadmapStep key={i} step={s} index={i} />
             ))}
           </div>
 
@@ -264,7 +261,7 @@ export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
             🔥 Based on your resume, here are the most in-demand roles in the market right now — with tech stacks, certifications, and top hiring companies.
           </p>
           {trending.jobs?.map((job, i) => (
-            <TrendingJobCard key={i} job={job} />
+            <TrendingJobCard key={i} job={job} content={content} />
           ))}
           {trending.market_insight && (
             <div style={{
@@ -308,21 +305,31 @@ export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
   );
 }
 
-/* ── Rich sub-components ── */
+/* ── Rich sub-components (data-driven, no hardcoded maps) ── */
 
-function ImprovementCard({ text, index }) {
-  const ICONS   = ["📌", "⚡", "💡", "🔑", "📐", "🎨", "🔍", "📊"];
-  const URGENCY = ["High Priority", "High Priority", "Medium Priority", "Medium Priority",
-                   "Low Priority",  "Low Priority",  "High Priority",   "Medium Priority"];
-  const URGENCY_COLORS = {
-    "High Priority":   { bg: "#fef2f2", border: "#fecaca", badge: "#ef4444" },
-    "Medium Priority": { bg: "#fff7ed", border: "#fed7aa", badge: "#f97316" },
-    "Low Priority":    { bg: "#f0fdf4", border: "#bbf7d0", badge: "#22c55e" },
-  };
-  const urgency = URGENCY[index] || "Medium Priority";
-  const colors  = URGENCY_COLORS[urgency];
+const URGENCY_COLORS = {
+  "High Priority":   { bg: "#fef2f2", border: "#fecaca", badge: "#ef4444" },
+  "Medium Priority": { bg: "#fff7ed", border: "#fed7aa", badge: "#f97316" },
+  "Low Priority":    { bg: "#f0fdf4", border: "#bbf7d0", badge: "#22c55e" },
+};
 
-  // Split into problem + what to do if possible
+const IMPACT_COLORS = {
+  "🚀 High Impact": "#b45309",
+  "⚡ Quick Win":   "#0369a1",
+  "📈 Long-term":   "#166534",
+  "🔑 Critical":    "#dc2626",
+  "💡 Strategic":   "#7c3d12",
+};
+
+const CATEGORY_COLORS = {
+  Skills: "#0369a1", Leadership: "#7c3d12", Credentials: "#166534",
+  Portfolio: "#b45309", Network: "#6d28d9", Visibility: "#be185d",
+  Mentoring: "#0369a1", Strategy: "#7c3d12", Execution: "#166534",
+  Growth: "#b45309",
+};
+
+function ImprovementCard({ text, urgency = "Medium Priority", index }) {
+  const colors = URGENCY_COLORS[urgency] || URGENCY_COLORS["Medium Priority"];
   const parts = text.split(/\.\s+(?=[A-Z])/);
 
   return (
@@ -332,7 +339,7 @@ function ImprovementCard({ text, index }) {
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, gap: 8 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 18 }}>{ICONS[index] || "📌"}</span>
+          <span style={{ fontSize: 18 }}>📌</span>
           <span style={{ fontWeight: 700, fontSize: 13 }}>Issue #{index + 1}</span>
         </div>
         <span style={{
@@ -352,35 +359,9 @@ function ImprovementCard({ text, index }) {
   );
 }
 
-function RecommendationCard({ text, index }) {
-  const IMPACT  = ["🚀 High Impact", "🚀 High Impact", "⚡ Quick Win", "⚡ Quick Win",
-                   "📈 Long-term",   "📈 Long-term",   "🔑 Critical",  "💡 Strategic",
-                   "⚡ Quick Win",   "📈 Long-term",   "🔑 Critical",  "💡 Strategic"];
-  const IMPACT_COLORS = {
-    "🚀 High Impact": "#b45309",
-    "⚡ Quick Win":   "#0369a1",
-    "📈 Long-term":   "#166534",
-    "🔑 Critical":    "#dc2626",
-    "💡 Strategic":   "#7c3d12",
-  };
-  const impact = IMPACT[index] || "💡 Strategic";
-  const color  = IMPACT_COLORS[impact] || "#57514a";
-
-  // Try to extract why it matters
-  const whyMap = [
-    "Recruiters spend only 6 seconds scanning a resume. Your first impression needs to count.",
-    "ATS systems filter 75% of resumes before a human sees them. Keywords are your gatekeepers.",
-    "Quantified achievements are 40% more persuasive than vague descriptions.",
-    "LinkedIn is checked by 87% of recruiters before shortlisting a candidate.",
-    "Certifications validate expertise and can increase salary offers by 10-20%.",
-    "Projects demonstrate initiative and real-world capability beyond job duties.",
-    "Action verbs signal leadership and ownership — not just task execution.",
-    "A tailored resume is 3× more likely to get an interview than a generic one.",
-    "Skills sections with 10+ technologies rank higher in ATS systems.",
-    "A strong summary positions you before the recruiter reads anything else.",
-    "Industry networking accounts for 70-80% of all job placements.",
-    "Consistent personal branding across LinkedIn and resume builds recruiter trust.",
-  ];
+function RecommendationCard({ text, impact = "Strategic", whyItMatters = "", index }) {
+  const normalizedImpact = impact.startsWith("🚀") || impact.startsWith("⚡") || impact.startsWith("📈") || impact.startsWith("🔑") || impact.startsWith("💡") ? impact : `💡 ${impact}`;
+  const color = IMPACT_COLORS[normalizedImpact] || "#57514a";
 
   return (
     <div style={{
@@ -391,52 +372,26 @@ function RecommendationCard({ text, index }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontWeight: 700, fontSize: 13, color: "#1c1a17" }}>#{index + 1}</span>
         <span style={{ fontSize: 11, fontWeight: 700, color, background: `${color}15`, borderRadius: 20, padding: "2px 9px" }}>
-          {impact}
+          {normalizedImpact}
         </span>
       </div>
       <p style={{ fontSize: 13, lineHeight: 1.7, margin: "0 0 6px", fontWeight: 600 }}>{text}</p>
-      <p style={{ fontSize: 12, color: "#57514a", lineHeight: 1.6, margin: 0, borderTop: "1px solid #f0ede8", paddingTop: 6 }}>
-        💡 <em>{whyMap[index] || "Following this recommendation will significantly improve your interview chances."}</em>
-      </p>
+      {whyItMatters && (
+        <p style={{ fontSize: 12, color: "#57514a", lineHeight: 1.6, margin: 0, borderTop: "1px solid #f0ede8", paddingTop: 6 }}>
+          💡 <em>{whyItMatters}</em>
+        </p>
+      )}
     </div>
   );
 }
 
-function RoadmapStep({ text, index }) {
-  const TIMEFRAMES = [
-    "Month 1-2",  "Month 2-4",  "Month 3-6",  "Month 4-8",
-    "Month 6-9",  "Month 6-12", "Month 9-15", "Month 12-18",
-    "Month 12-24","Month 18-24",
-  ];
-  const CATEGORIES = [
-    { label: "Skills", color: "#0369a1" },
-    { label: "Leadership", color: "#7c3d12" },
-    { label: "Credentials", color: "#166534" },
-    { label: "Portfolio", color: "#b45309" },
-    { label: "Network", color: "#6d28d9" },
-    { label: "Visibility", color: "#be185d" },
-    { label: "Mentoring", color: "#0369a1" },
-    { label: "Strategy", color: "#7c3d12" },
-    { label: "Execution", color: "#166534" },
-    { label: "Growth", color: "#b45309" },
-  ];
-  const cat = CATEGORIES[index % CATEGORIES.length];
-
-  // Expanded explanations for common roadmap steps
-  const expansions = {
-    "Deepen expertise": "Pick 1-2 core technologies and go beyond tutorials. Contribute to open-source, build side projects, and read official docs + RFCs. Depth beats breadth at senior levels.",
-    "cross-functional": "Volunteer for projects requiring coordination with Product, Design, or Data teams. Cross-functional experience is the #1 differentiator between senior ICs and leads.",
-    "certifications": "Certifications add credibility and pass ATS filters. Focus on role-relevant certs (AWS for backend, GCP for ML, PMP for management). They also reflect structured learning discipline.",
-    "portfolio": "Document your projects on GitHub with clear READMEs. Quantify results (50ms latency reduction, 3× faster builds). Recruiters spend 20% of their time on GitHub when evaluating senior candidates.",
-    "Network": "70-80% of jobs are filled through referrals. Attend local meetups, contribute to Slack communities (CNCF, PyData), and connect with ex-colleagues. Referral candidates get 3× more interviews.",
-    "Contribute": "Open-source contributions signal technical credibility and communication skills. Even documentation PRs matter. Pick projects used by your target companies.",
-    "Present": "Speaking at meetups builds personal brand and forces clarity of thinking. One conference talk can generate 5-10 recruiter contacts. Start with internal tech talks or local user groups.",
-  };
-
-  let explanation = "A focused action that moves you measurably toward your next career milestone.";
-  for (const [key, val] of Object.entries(expansions)) {
-    if (text.toLowerCase().includes(key.toLowerCase())) { explanation = val; break; }
-  }
+function RoadmapStep({ step, index }) {
+  // step can be a string (backward compat) or an object { text, timeframe, category, explanation }
+  const text = typeof step === 'string' ? step : (step.text || '');
+  const timeframe = typeof step === 'object' ? (step.timeframe || `Step ${index + 1}`) : `Step ${index + 1}`;
+  const category = typeof step === 'object' ? (step.category || 'Growth') : 'Growth';
+  const explanation = typeof step === 'object' ? (step.explanation || 'A focused action that moves you measurably toward your next career milestone.') : 'A focused action that moves you measurably toward your next career milestone.';
+  const color = CATEGORY_COLORS[category] || "#57514a";
 
   return (
     <div style={{
@@ -445,24 +400,24 @@ function RoadmapStep({ text, index }) {
       {/* Timeline marker */}
       <div style={{ flexShrink: 0, textAlign: "center", width: 56 }}>
         <div style={{
-          width: 28, height: 28, borderRadius: "50%", background: cat.color,
+          width: 28, height: 28, borderRadius: "50%", background: color,
           color: "#fff", fontWeight: 800, fontSize: 12,
           display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 3px"
         }}>{index + 1}</div>
-        <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.2 }}>{TIMEFRAMES[index] || `Step ${index+1}`}</div>
+        <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.2 }}>{timeframe}</div>
       </div>
 
       {/* Card */}
       <div style={{
         flex: 1, background: "#fff", border: "1px solid #e2dccf",
-        borderTop: `2px solid ${cat.color}`, borderRadius: 9, padding: "10px 14px"
+        borderTop: `2px solid ${color}`, borderRadius: 9, padding: "10px 14px"
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
           <span style={{ fontWeight: 700, fontSize: 13 }}>{text}</span>
           <span style={{
-            fontSize: 10, fontWeight: 700, color: cat.color,
-            background: `${cat.color}15`, borderRadius: 20, padding: "2px 8px", flexShrink: 0, marginLeft: 6
-          }}>{cat.label}</span>
+            fontSize: 10, fontWeight: 700, color: color,
+            background: `${color}15`, borderRadius: 20, padding: "2px 8px", flexShrink: 0, marginLeft: 6
+          }}>{category}</span>
         </div>
         <p style={{ fontSize: 12, color: "#57514a", lineHeight: 1.6, margin: 0 }}>{explanation}</p>
       </div>
@@ -470,7 +425,7 @@ function RoadmapStep({ text, index }) {
   );
 }
 
-function TrendingJobCard({ job }) {
+function TrendingJobCard({ job, content }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div style={{
@@ -500,10 +455,10 @@ function TrendingJobCard({ job }) {
       <div style={{ padding: 14 }}>
         <p style={{ fontSize: 13, color: "#57514a", lineHeight: 1.7, margin: "0 0 12px" }}>{job.description}</p>
 
-        {/* Tech Stack */}
+        {/* Tech Stack / Key Tools */}
         {job.tech_stack?.length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#1c1a17", marginBottom: 6 }}>🛠️ Required Tech Stack</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#1c1a17", marginBottom: 6 }}>🛠️ Key Tools & Skills</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {job.tech_stack.map((t, i) => (
                 <span key={i} style={{
@@ -573,18 +528,23 @@ function TrendingJobCard({ job }) {
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>🏢 Top Hiring Companies</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {job.hiring_companies.map((co, i) => (
-                    <a key={i}
-                      href={`https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(job.title)}&company=${encodeURIComponent(co.name || co)}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{
-                        fontSize: 12, fontWeight: 600, padding: "5px 12px",
-                        borderRadius: 8, background: "#0077b5", color: "#fff",
-                        textDecoration: "none", display: "flex", alignItems: "center", gap: 4
-                      }}>
-                      🔗 {co.name || co}
-                    </a>
-                  ))}
+                  {job.hiring_companies.map((co, i) => {
+                    const companyName = typeof co === 'object' ? (co.name || '') : String(co);
+                    const searchQuery = encodeURIComponent(`${job.title || ''} ${companyName}`);
+                    const location = encodeURIComponent(content?.contact?.location || 'India');
+                    return (
+                      <a key={i}
+                        href={`https://www.linkedin.com/jobs/search?keywords=${searchQuery}&location=${location}&f_TPR=r604800&f_E=1&sortBy=DD`}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{
+                          fontSize: 12, fontWeight: 600, padding: "5px 12px",
+                          borderRadius: 8, background: "#0077b5", color: "#fff",
+                          textDecoration: "none", display: "flex", alignItems: "center", gap: 4
+                        }}>
+                        🔗 {companyName}
+                      </a>
+                    );
+                  })}
                 </div>
               </div>
             )}
