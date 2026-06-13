@@ -42,7 +42,7 @@ def _anthropic(prompt: str, system: str, max_tokens: int) -> str:
         "content-type": "application/json",
     }
     body = {
-        "model": settings.AI_MODEL or "claude-sonnet-4-20250514",
+        "model": settings.AI_MODEL or "gemini-flash-lite-latest",
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }

@@ -18,16 +18,12 @@ export default function Topbar() {
       </Link>
       <div className="spacer" />
       {user && (
-        <div className="topbar-actions">
+        <>
           <Link to="/career" className="btn btn-ghost btn-sm">Career</Link>
-          {user.is_admin && (
-            <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>
-          )}
+          {user.is_admin && <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>
           <span className="topbar-user">{user.full_name || user.email}</span>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
-            Logout
-          </button>
-        </div>
+          <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Logout</button>
+        </>
       )}
     </nav>
   );

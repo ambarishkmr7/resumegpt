@@ -27,6 +27,7 @@ from app.templates.router import router as templates_router
 from app.subscription.router import router as sub_router
 from app.admin.router import router as admin_router
 from app.public_routes.router import router as public_router
+from app.agent.router import router as agent_router
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -120,6 +121,7 @@ app.include_router(templates_router)
 app.include_router(sub_router)
 app.include_router(admin_router)
 app.include_router(public_router)
+app.include_router(agent_router)
 
 
 @app.get("/api/health")

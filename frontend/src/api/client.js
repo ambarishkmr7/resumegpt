@@ -317,4 +317,21 @@ export const api = {
     fetch(`${BASE}/api/admin/public/cms`).then(handle),
   getSubscriptionPage: () =>
     fetch(`${BASE}/api/admin/public/cms/subscription`).then(handle),
+
+  // ---- Generic HTTP helpers ----
+  get: (url) => fetch(`${BASE}${url}`, { headers: authHeaders() }).then(handle),
+  post: (url, body) =>
+    fetch(`${BASE}${url}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  put: (url, body) =>
+    fetch(`${BASE}${url}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  delete: (url) =>
+    fetch(`${BASE}${url}`, { method: "DELETE", headers: authHeaders() }).then(handle),
 };

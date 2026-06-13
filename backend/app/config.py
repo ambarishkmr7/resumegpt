@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # AI provider (optional)
     ANTHROPIC_API_KEY: str = ""
-    AI_MODEL: str = "claude-sonnet-4-20250514"
+    AI_MODEL: str = "gemini-flash-lite-latest"
 
     # Get key from: https://aistudio.google.com/app/apikey
     GEMINI_API_KEY: str = ""

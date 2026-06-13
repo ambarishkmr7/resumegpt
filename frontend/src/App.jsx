@@ -9,6 +9,7 @@ import Editor from "./pages/Editor.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
 import CmsPage from "./pages/CmsPage.jsx";
 import BlogPage from "./pages/BlogPage.jsx";
+import CareerPage from "./pages/CareerPage.jsx";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/editor/:id" element={<Protected><Editor /></Protected>} />
       <Route path="/admin" element={<Protected><AdminPage /></Protected>} />
+      <Route path="/career" element={<Protected><CareerPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
