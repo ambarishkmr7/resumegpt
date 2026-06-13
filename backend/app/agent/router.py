@@ -100,6 +100,7 @@ async def get_conversation(thread_id: str, user: User = Depends(get_current_user
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.delete("/conversations/{thread_id}")
 async def delete_conversation(thread_id: str, user: User = Depends(get_current_user)):
     """Delete a conversation thread."""
     checkpointer = await get_checkpointer()
