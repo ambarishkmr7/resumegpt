@@ -131,6 +131,7 @@ export default function ProfilePage() {
 
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
+  const [photoError, setPhotoError] = useState(false);
   const photoRef = useRef();
 
   const load = useCallback(() => {
@@ -158,6 +159,7 @@ export default function ProfilePage() {
         setPct(data.profile_completion || 0);
         if (data.profile_photo_key) {
           setPhotoPreview(`/api/profile/photo?key=${data.profile_photo_key}`);
+          setPhotoError(false);
         }
       })
       .catch((e) => console.error("Failed to load profile:", e))
@@ -222,6 +224,7 @@ export default function ProfilePage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setPhotoFile(file);
+    setPhotoError(false);
     const reader = new FileReader();
     reader.onload = () => setPhotoPreview(reader.result);
     reader.readAsDataURL(file);
@@ -330,8 +333,8 @@ export default function ProfilePage() {
         <Section title="Personal Details" icon="👤">
           <div style={{ display: "flex", alignItems: "flex-end", gap: 20, marginBottom: 20 }}>
             <div style={{ textAlign: "center" }}>
-              {photoPreview ? (
-                <img src={photoPreview} alt="Profile" style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--line)" }} />
+              {photoPreview && !photoError ? (
+                <img src={photoPreview} alt="Profile" style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--line)" }} onError={() => setPhotoError(true)} />
               ) : (
                 <div style={{ width: 80, height: 80, borderRadius: "50%", background: "var(--accent-soft)", display: "grid", placeItems: "center", fontSize: 28, color: "var(--accent)" }}>
                   {fullName ? fullName[0].toUpperCase() : "?"}

@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -259,13 +259,22 @@ async def upload_profile_photo(
 async def get_profile_photo(
     key: str | None = None,
 ):
-    """Serve a profile photo by its storage key. Public — key is a random UUID."""
+    """Serve a profile photo. For S3, redirects to a presigned URL.
+    For local storage, streams the file directly."""
     if not key:
         raise HTTPException(status_code=400, detail="Missing key parameter")
 
     settings = get_settings()
     storage = StorageService(settings)
 
+    # For S3, redirect to presigned URL (faster, works on serverless)
+    if storage._backend == "s3":
+        url = storage.get_presigned_url(key)
+        if url:
+            return RedirectResponse(url=url, status_code=302)
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    # For local storage, stream directly
     try:
         data = storage.download_bytes(key)
     except Exception:

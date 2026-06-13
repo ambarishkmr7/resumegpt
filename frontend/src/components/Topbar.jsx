@@ -43,6 +43,12 @@ export default function Topbar() {
   const initials = user
     ? (user.full_name || user.email || "?").charAt(0).toUpperCase()
     : "?";
+  const [imgError, setImgError] = useState(false);
+
+  // Reset imgError when profilePhoto changes (e.g. after re-upload)
+  useEffect(() => { setImgError(false); }, [profilePhoto]);
+
+  const showPhoto = profilePhoto && !imgError;
 
   return (
     <nav className="topbar">
@@ -53,24 +59,15 @@ export default function Topbar() {
 
       {user && (
         <div className="topbar-nav">
-          {user.is_admin ? (
+          {NAV_ITEMS.map((item) => (
             <Link
-              to="/admin"
-              className={`topbar-nav-link ${isActive("/admin") ? "active" : ""}`}
+              key={item.to}
+              to={item.to}
+              className={`topbar-nav-link ${isActive(item.to) ? "active" : ""}`}
             >
-              🛡️ Admin Panel
+              {item.label}
             </Link>
-          ) : (
-            NAV_ITEMS.map((item) => (
-              <Link
-                key={item.to}
-                to={item.to}
-                className={`topbar-nav-link ${isActive(item.to) ? "active" : ""}`}
-              >
-                {item.label}
-              </Link>
-            ))
-          )}
+          ))}
         </div>
       )}
 
@@ -83,8 +80,8 @@ export default function Topbar() {
             onClick={() => setDropdownOpen(!dropdownOpen)}
             type="button"
           >
-            {profilePhoto ? (
-              <img src={profilePhoto} alt="Profile" className="topbar-avatar" />
+            {showPhoto ? (
+              <img src={profilePhoto} alt="Profile" className="topbar-avatar" onError={() => setImgError(true)} />
             ) : (
               <div className="topbar-avatar topbar-avatar-initials">{initials}</div>
             )}
@@ -94,27 +91,13 @@ export default function Topbar() {
 
           {dropdownOpen && (
             <div className="topbar-dropdown">
-              {user.is_admin ? (
-                <>
-                  <button className="topbar-dropdown-item" onClick={() => { setDropdownOpen(false); navigate("/admin"); }} type="button">
-                    🛡️ Admin Panel
-                  </button>
-                  <div className="topbar-dropdown-sep" />
-                  <button className="topbar-dropdown-item topbar-dropdown-logout" onClick={handleLogout} type="button">
-                    🚪 Logout
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button className="topbar-dropdown-item" onClick={handleEditProfile} type="button">
-                    ✏️ Edit Profile
-                  </button>
-                  <div className="topbar-dropdown-sep" />
-                  <button className="topbar-dropdown-item topbar-dropdown-logout" onClick={handleLogout} type="button">
-                    🚪 Logout
-                  </button>
-                </>
-              )}
+              <button className="topbar-dropdown-item" onClick={handleEditProfile} type="button">
+                ✏️ Edit Profile
+              </button>
+              <div className="topbar-dropdown-sep" />
+              <button className="topbar-dropdown-item topbar-dropdown-logout" onClick={handleLogout} type="button">
+                🚪 Logout
+              </button>
             </div>
           )}
         </div>
