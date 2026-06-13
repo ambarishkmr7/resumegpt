@@ -1,5 +1,8 @@
+// resumegpt/frontend/src/components/CareerChat.jsx
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../api/client.js";
+import Markdown from "./Markdown.jsx";
 
 export default function CareerChat({ threadId, onThreadCreated, onConversationUpdate }) {
   const [messages, setMessages] = useState([]);
@@ -31,11 +34,21 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
       const data = response.messages || response.data?.messages || [];
       if (requestId === historyRequestIdRef.current) {
         setMessages(data);
+        // Persist to sessionStorage so refresh doesn't lose the chat
+        try {
+          sessionStorage.setItem(`career:chat:${tid}`, JSON.stringify(data));
+        } catch (_) {}
       }
     } catch (e) {
       console.error("Failed to load conversation", e);
       if (requestId === historyRequestIdRef.current) {
-        setMessages([]);
+        // Try to restore from sessionStorage on failure
+        const cached = sessionStorage.getItem(`career:chat:${tid}`);
+        if (cached) {
+          try { setMessages(JSON.parse(cached)); } catch (_) { setMessages([]); }
+        } else {
+          setMessages([]);
+        }
       }
     } finally {
       if (requestId === historyRequestIdRef.current) {
@@ -46,6 +59,17 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
 
   useEffect(() => {
     if (threadId) {
+      // Try sessionStorage cache first for instant restore, then revalidate from API
+      const cached = sessionStorage.getItem(`career:chat:${threadId}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) {
+            setMessages(parsed);
+            setLoadingHistory(false);
+          }
+        } catch (_) {}
+      }
       loadConversation(threadId);
     } else {
       historyRequestIdRef.current += 1;
@@ -54,10 +78,15 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
     }
   }, [threadId, loadConversation]);
 
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || loadingRef.current) return;
+  const inputRef = useRef(input);
+  useEffect(() => { inputRef.current = input; }, [input]);
 
-    const userMessage = { role: "user", content: input.trim() };
+  const handleSend = useCallback(async () => {
+    const currentInput = inputRef.current.trim();
+    if (!currentInput || loadingRef.current) return;
+
+    const userMessage = { role: "user", content: currentInput };
+    // Optimistically show the user's message immediately
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     loadingRef.current = true;
@@ -70,17 +99,38 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
       });
 
       const data = response.data || response;
+      const isNewThread = !threadId && data.thread_id;
 
-      if (!threadId && data.thread_id) {
+      if (isNewThread) {
         onThreadCreated(data.thread_id);
       }
 
-      setMessages(data.messages || []);
-      onConversationUpdate?.();
+      // Replace with backend's canonical message list (includes tool calls, etc.)
+      // but only if the backend list already has the user message to avoid a flash.
+      const backendMessages = data.messages || [];
+      const hasUserMsg = backendMessages.some(
+        (m) => m.role === "user" && m.content && (typeof m.content === "string" ? m.content : JSON.stringify(m.content)).includes(currentInput.slice(0, 20))
+      );
+      if (hasUserMsg) {
+        setMessages(backendMessages);
+        // Persist to sessionStorage
+        const tid = data.thread_id || threadId;
+        if (tid) {
+          try { sessionStorage.setItem(`career:chat:${tid}`, JSON.stringify(backendMessages)); } catch (_) {}
+        }
+      }
+      // If backend doesn't have user msg yet, keep our optimistic update
+      // and let loadConversation sync when threadId changes.
+
+      // Only refresh sidebar conversation list for new threads
+      if (isNewThread) {
+        onConversationUpdate?.();
+      }
     } catch (e) {
       console.error("Failed to send chat message", e);
+      // Remove the optimistic user message and show error
       setMessages((prev) => [
-        ...prev,
+        ...prev.filter((m) => m !== userMessage),
         { role: "assistant", content: "Sorry, something went wrong. Please try again." },
       ]);
       setInput(userMessage.content);
@@ -88,7 +138,7 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [input, threadId, onThreadCreated, onConversationUpdate]);
+  }, [threadId, onThreadCreated, onConversationUpdate]);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -97,150 +147,117 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
     }
   };
 
-  // Robust Custom Markdown Parser
-  const renderMarkdown = (text) => {
-    if (!text) return null;
-
-    let cleanText = text;
-    if (cleanText.includes("```json")) {
-      cleanText = cleanText.replace(/```json\n([\s\S]*?)\n```/g, "");
+  const toText = (content) => {
+    if (!content) return "";
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((b) => (typeof b === "string" ? b : b?.text || ""))
+        .join("");
     }
-
-    const lines = cleanText.split("\n");
-    return lines.map((line, i) => {
-      const trimmed = line.trim();
-      if (!trimmed) return <div key={i} style={{ height: "8px" }} />;
-
-      const listMatch = /^(?:\*|\-|\d+\.)\s+(.*)/.exec(trimmed);
-      let content = listMatch ? listMatch[1] : trimmed;
-
-      const parts = [];
-      let currentIdx = 0;
-      const regex = /(\*\*.*?\*\*|\[.*?\]\(.*?\))/g;
-      let match;
-
-      while ((match = regex.exec(content)) !== null) {
-        if (match.index > currentIdx) {
-          parts.push(content.substring(currentIdx, match.index));
-        }
-
-        const token = match[0];
-        if (token.startsWith("**")) {
-          parts.push(<strong key={`b-${i}-${currentIdx}`}>{token.slice(2, -2)}</strong>);
-        } else if (token.startsWith("[")) {
-          const linkMatch = token.match(/\[(.*?)\]\((.*?)\)/);
-          if (linkMatch) {
-            parts.push(
-              <a
-                key={`l-${i}-${currentIdx}`}
-                href={linkMatch[2]}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="chat-link"
-              >
-                {linkMatch[1]}
-              </a>
-            );
-          }
-        }
-        currentIdx = regex.lastIndex;
-      }
-
-      if (currentIdx < content.length) {
-        parts.push(content.substring(currentIdx));
-      }
-
-      if (listMatch) {
-        return <li key={i} className="md-list-item">{parts.length > 0 ? parts : content}</li>;
-      }
-      return <p key={i} className="md-paragraph">{parts.length > 0 ? parts : content}</p>;
-    });
+    return String(content);
   };
 
-  const visibleMessages = messages.filter(
-    (msg) =>
-      (msg.role === "user" || msg.role === "assistant") &&
-      msg.content &&
-      msg.content.trim() !== ""
-  );
+  const visibleMessages = messages.filter((msg) => {
+    if (msg.role !== "user" && msg.role !== "assistant") return false;
+    if (!msg.content) return false;
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : Array.isArray(msg.content)
+        ? msg.content
+            .map((b) => (typeof b === "string" ? b : b?.text || ""))
+            .join("")
+        : String(msg.content);
+    return text.trim() !== "";
+  });
   const lastVisibleMessage = visibleMessages[visibleMessages.length - 1];
   const showTypingIndicator = loading && lastVisibleMessage?.role !== "assistant";
 
   return (
     <div className="career-chat">
-      <div className="chat-messages">
-        {loadingHistory ? (
-          <div className="chat-skeleton">
-            <div className="skeleton-message user">
-              <div className="skeleton-avatar"></div>
-              <div className="skeleton-bubble"></div>
-            </div>
-            <div className="skeleton-message assistant">
-              <div className="skeleton-avatar"></div>
-              <div className="skeleton-bubble">
-                <div className="skeleton-line"></div>
-                <div className="skeleton-line short"></div>
+      {/* 1. SCROLL AREA - Handles scrollbars only */}
+      <div className="chat-scroll-area">
+        {/* 2. PADDING AREA - Handles flex layout & breathing room safely */}
+        <div className="chat-content-padding">
+          
+          {loadingHistory ? (
+            <div className="chat-skeleton">
+              <div className="skeleton-message user">
+                <div className="skeleton-avatar"></div>
+                <div className="skeleton-bubble"></div>
+              </div>
+              <div className="skeleton-message assistant">
+                <div className="skeleton-avatar"></div>
+                <div className="skeleton-bubble">
+                  <div className="skeleton-line"></div>
+                  <div className="skeleton-line short"></div>
+                </div>
+              </div>
+              <div className="skeleton-message user">
+                <div className="skeleton-avatar"></div>
+                <div className="skeleton-bubble"></div>
+              </div>
+              <div className="skeleton-message assistant">
+                <div className="skeleton-avatar"></div>
+                <div className="skeleton-bubble">
+                  <div className="skeleton-line"></div>
+                  <div className="skeleton-line"></div>
+                  <div className="skeleton-line short"></div>
+                </div>
               </div>
             </div>
-            <div className="skeleton-message user">
-              <div className="skeleton-avatar"></div>
-              <div className="skeleton-bubble"></div>
-            </div>
-            <div className="skeleton-message assistant">
-              <div className="skeleton-avatar"></div>
-              <div className="skeleton-bubble">
-                <div className="skeleton-line"></div>
-                <div className="skeleton-line"></div>
-                <div className="skeleton-line short"></div>
+          ) : (
+            <>
+              {visibleMessages.length === 0 && !loading && (
+                <div className="chat-welcome">
+                  <div className="welcome-icon">🤖</div>
+                  <h1>Hi! I'm your Career Assistant</h1>
+                  <p>I can help you find jobs on LinkedIn, research companies, and give career advice.</p>
+                  <div className="suggestions">
+                    <button onClick={() => setInput("Find remote Python developer jobs")}>
+                      🔍 Find remote Python jobs
+                    </button>
+                    <button onClick={() => setInput("Search for entry-level data science positions")}>
+                      🎓 Entry-level data science roles
+                    </button>
+                    <button onClick={() => setInput("Show me jobs at Google")}>
+                      🏢 Jobs at Google
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {visibleMessages.map((msg, i) => {
+                const text = toText(msg.content);
+                const stableKey = `${msg.role}-${i}-${text.slice(0, 40)}`;
+                return (
+                  <div key={stableKey} className={`message ${msg.role}`}>
+                    <div className="message-avatar">
+                      {msg.role === "user" ? "👤" : "🤖"}
+                    </div>
+                    <div className="message-content">
+                      <Markdown>{text}</Markdown>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {showTypingIndicator && (
+            <div className="message assistant">
+              <div className="message-avatar">🤖</div>
+              <div className="message-content">
+                <div className="typing-indicator">
+                  <span></span><span></span><span></span>
+                </div>
               </div>
             </div>
-          </div>
-        ) : (
-          <>
-        {visibleMessages.length === 0 && !loading && (
-          <div className="chat-welcome">
-            <div className="welcome-icon">🤖</div>
-            <h1>Hi! I'm your Career Assistant</h1>
-            <p>I can help you find jobs on LinkedIn, research companies, and give career advice.</p>
-            <div className="suggestions">
-              <button onClick={() => setInput("Find remote Python developer jobs")}>
-                🔍 Find remote Python jobs
-              </button>
-              <button onClick={() => setInput("Search for entry-level data science positions")}>
-                🎓 Entry-level data science roles
-              </button>
-              <button onClick={() => setInput("Show me jobs at Google")}>
-                🏢 Jobs at Google
-              </button>
-            </div>
-          </div>
-        )}
+          )}
 
-        {visibleMessages.map((msg, i) => (
-          <div key={i} className={`message ${msg.role}`}>
-            <div className="message-avatar">
-              {msg.role === "user" ? "👤" : "🤖"}
-            </div>
-            <div className="message-content">
-              {renderMarkdown(msg.content)}
-            </div>
-          </div>
-        ))}
-          </>
-        )}
-
-        {showTypingIndicator && (
-          <div className="message assistant">
-            <div className="message-avatar">🤖</div>
-            <div className="message-content">
-              <div className="typing-indicator">
-                <span></span><span></span><span></span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
+          {/* Physical spacer to ensure perfect scroll landing */}
+          <div ref={messagesEndRef} style={{ height: 20, flexShrink: 0, width: "100%" }} />
+        </div>
       </div>
 
       <div className="chat-input-area">
@@ -264,28 +281,33 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
       </div>
 
       <style>{`
-        /* ── Root: must fill .career-main fully ── */
+        /* ── Root Layout ── */
         .career-chat {
-          display: flex;
-          flex-direction: column;
-          flex: 1;
-          height: 100%;        /* explicit height so flex: 1 always resolves */
-          min-height: 0;       /* allow shrinking below content size */
-          width: 100%;
-          position: relative;
-          overflow: hidden;
-          background: #fffdf8;
+          display: flex !important;
+          flex-direction: column !important;
+          position: absolute !important;
+          inset: 0 !important;
+          overflow: hidden !important;
+          background: #fffdf8 !important;
         }
 
-        /* ── Scrollable messages region ── */
-        .chat-messages {
-          flex: 1;
-          min-height: 0;       /* critical: without this the area won't shrink */
-          overflow-y: auto;
-          padding: 20px 20px 12px;
-          padding-top: 60px;   /* offset for sidebar-toggle button */
-          display: flex;
-          flex-direction: column;
+        /* ── Outer Scroll Container (Isolates overflow bounds) ── */
+        .chat-scroll-area {
+          flex: 1 1 0% !important;
+          height: 0 !important;           /* Force height resolution to parent bounds */
+          min-height: 0 !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          width: 100% !important;
+        }
+
+        /* ── Inner Padding/Flex Container (Protects elements from cutoff) ── */
+        .chat-content-padding {
+          display: flex !important;
+          flex-direction: column !important;
+          min-height: 100% !important;
+          padding: 60px 20px 20px !important;
+          box-sizing: border-box !important;
         }
 
         /* Welcome screen */
@@ -293,7 +315,8 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
           text-align: center;
           padding: 40px 20px;
           color: #57514a;
-          margin: auto 0; /* vertically center in the flex column */
+          margin: auto 0;
+          flex-shrink: 0;
         }
         .welcome-icon { font-size: 48px; margin-bottom: 16px; }
         .chat-welcome h1 { font-size: 24px; margin-bottom: 12px; color: #1c1a17; }
@@ -327,9 +350,14 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
           max-width: 800px;
           margin: 0 auto;
           width: 100%;
-          padding: 0 20px;
+          flex-shrink: 0;
         }
-        .skeleton-message        { display: flex; gap: 12px; align-items: flex-start; }
+        .skeleton-message { 
+          display: flex; 
+          gap: 12px; 
+          align-items: flex-start; 
+          flex-shrink: 0; 
+        }
         .skeleton-message.user   { flex-direction: row-reverse; }
         .skeleton-avatar {
           width: 36px; height: 36px; border-radius: 50%;
@@ -369,6 +397,7 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
           margin-left: auto;
           margin-right: auto;
           width: 100%;
+          flex-shrink: 0;      
         }
         .message.user { flex-direction: row-reverse; }
         .message-avatar {
@@ -390,13 +419,10 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
           border: 1px solid #e2dccf; border-top-left-radius: 4px;
         }
 
-        /* Markdown styles */
-        .md-paragraph      { margin: 0 0 10px 0; }
-        .md-paragraph:last-child { margin-bottom: 0; }
-        .md-list-item      { margin-left: 20px; margin-bottom: 6px; }
-        .chat-link         { color: #b45309; text-decoration: underline; font-weight: 600; }
-        .chat-link:hover   { color: #d97706; }
-        .message.user .chat-link { color: #fef3c7; }
+        /* Chat-specific markdown overrides */
+        .message-content .markdown-body { font-size: 15px; line-height: 1.6; }
+        .message-content .markdown-body p:last-child { margin-bottom: 0; }
+        .message.user .markdown-body .md-link { color: #fef3c7; }
 
         /* Typing indicator */
         .typing-indicator { display: flex; gap: 4px; padding: 8px 0; }
@@ -412,13 +438,14 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
           40%            { transform: scale(1);   opacity: 1;   }
         }
 
-        /* ── Input bar — always pinned to bottom ── */
+        /* ── Input bar ── */
         .chat-input-area {
-          flex-shrink: 0;
-          padding: 16px 20px;
-          background: #fffdf8;
-          border-top: 1px solid #e2dccf;
-          width: 100%;
+          flex-shrink: 0 !important;
+          padding: 16px 20px !important;
+          background: #fffdf8 !important;
+          border-top: 1px solid #e2dccf !important;
+          width: 100% !important;
+          z-index: 10;
         }
         .chat-input-wrapper {
           display: flex;

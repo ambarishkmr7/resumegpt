@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "../api/client";
 import AudioInterview from "./AudioInterview.jsx";
+import CareerChat from "./CareerChat.jsx";
 import { auth } from "../firebase.js";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
+import { SkeletonLine, SkeletonBlock } from "./Skeleton.jsx";
 
 export default function ElitePanel({ content }) {
   const [tab, setTab] = useState(null);
@@ -52,6 +54,7 @@ export default function ElitePanel({ content }) {
     { id: "counseling", icon: "🤖", label: "Career Counseling" },
     { id: "interview", icon: "🎤", label: "Mock Interview" },
     { id: "agent", icon: "🚀", label: "AI Job Agent" },
+    { id: "career-chat", icon: "💬", label: "Career Chat" },
   ];
 
   // Init invisible reCAPTCHA once after mount.
@@ -228,7 +231,16 @@ export default function ElitePanel({ content }) {
             {chatHistory.map((m, i) => (
               <div key={i} className={`chat-msg ${m.role}`}><div className="chat-bubble">{m.content}</div></div>
             ))}
-            {loading && <div className="chat-msg assistant"><div className="chat-bubble">Thinking…</div></div>}
+            {loading && (
+              <div className="chat-msg assistant">
+                <div className="chat-bubble" style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 16px" }}>
+                  <SkeletonLine width="65%" height={16} />
+                  <SkeletonLine width="85%" height={16} />
+                  <SkeletonLine width="50%" height={16} />
+                  <SkeletonLine width="70%" height={16} />
+                </div>
+              </div>
+            )}
           </div>
           {chatSuggestions.length > 0 && (
             <div className="chat-suggestions">
@@ -275,6 +287,14 @@ export default function ElitePanel({ content }) {
                   <button className="btn btn-primary" onClick={() => startInterview("text")} disabled={loading} style={{ width: "100%" }}>
                     {loading ? "Loading…" : "Start Text Interview"}
                   </button>
+                  {loading && (
+                    <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <SkeletonLine width="100%" height={16} />
+                      <SkeletonLine width="85%" height={16} />
+                      <SkeletonLine width="70%" height={16} />
+                      <SkeletonLine width="55%" height={16} />
+                    </div>
+                  )}
                 </div>
 
                 {/* Audio Mode */}
@@ -373,6 +393,21 @@ export default function ElitePanel({ content }) {
                 {loading ? "Searching…" : "🚀 Launch AI Job Agent"}
               </button>
             </div>
+          ) : loading ? (
+            <div>
+              <SkeletonLine width={220} height={22} style={{ marginBottom: 20 }} />
+              <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+                {[1, 2, 3].map((i) => <SkeletonBlock key={i} width={120} height={38} borderRadius={8} />)}
+              </div>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} style={{ background: "#fff", border: "1px solid #e2dccf", borderRadius: 12, padding: 18, marginBottom: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <SkeletonLine width="55%" height={18} />
+                  <SkeletonLine width="40%" height={14} />
+                  <SkeletonLine width="80%" height={14} />
+                  <SkeletonLine width="65%" height={14} />
+                </div>
+              ))}
+            </div>
           ) : (
             <div>
               <div className="interview-header">
@@ -461,6 +496,11 @@ export default function ElitePanel({ content }) {
             </div>
           )}
         </div>
+      )}
+
+      {/* ======== CAREER CHAT ======== */}
+      {tab === "career-chat" && (
+        <CareerChat />
       )}
     </div>
   );

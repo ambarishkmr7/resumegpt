@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { SkeletonLine } from "./Skeleton.jsx";
 
 export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
   const [activeTab, setActiveTab] = useState(null);
@@ -81,9 +82,20 @@ export default function AIToolsPanel({ content, onApplyVariant, resumeId }) {
 
       {loading && (
         <div className="ai-loading">
-          <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>
-          <div>Analyzing with AI…</div>
-          <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>This may take 10-15 seconds</div>
+          <div style={{
+            width: 48, height: 48, borderRadius: "50%",
+            background: "linear-gradient(90deg, #f0ece4 25%, #e8e4db 50%, #f0ece4 75%)",
+            backgroundSize: "200% 100%", animation: "sk-shimmer 1.5s infinite",
+            margin: "0 auto 10px",
+          }} />
+          <div style={{ textAlign: "center", fontWeight: 600, fontSize: 15 }}>Analyzing with AI…</div>
+          <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 6, textAlign: "center" }}>This may take 10-15 seconds</div>
+          <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+            <SkeletonLine width="100%" height={18} />
+            <SkeletonLine width="85%" height={18} />
+            <SkeletonLine width="65%" height={18} />
+            <SkeletonLine width="75%" height={18} />
+          </div>
         </div>
       )}
       {error && <div className="error">{error}</div>}

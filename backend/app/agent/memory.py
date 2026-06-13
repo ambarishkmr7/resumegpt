@@ -37,11 +37,23 @@ async def _get_pool():
     global _pool
     if _pool is None:
         from psycopg_pool import AsyncConnectionPool
+        from psycopg.conninfo import conninfo_to_dict
         url = _get_memory_url()
+        # Parse connection info so we can inject SSL and keep-alive settings
+        # that Neon (serverless Postgres) requires to avoid dropped connections.
+        conn_kwargs = conninfo_to_dict(url)
+        conn_kwargs.update({
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "sslmode": conn_kwargs.get("sslmode", "require"),
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        })
         _pool = AsyncConnectionPool(
-            conninfo=url,
+            kwargs=conn_kwargs,
             max_size=10,
-            kwargs={"autocommit": True, "prepare_threshold": 0},
             open=False,
         )
         await _pool.open()

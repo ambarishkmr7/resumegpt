@@ -1,8 +1,31 @@
 import { useState } from "react";
+import { SkeletonBlock, SkeletonLine, SkeletonCircle } from "./Skeleton.jsx";
 
 export default function ATSPanel({ result, jobDescription, onJobDescriptionChange, onRescore, busy }) {
   const [showJD, setShowJD] = useState(false);
   const score = result?.score ?? 0;
+
+  if (!result) {
+    return (
+      <div className="panel">
+        <h3>ATS score</h3>
+        <div className="score-ring" style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <SkeletonCircle size={90} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+            <SkeletonLine width={90} height={20} />
+            <SkeletonLine width={160} height={16} />
+          </div>
+        </div>
+        <SkeletonBlock width="100%" height={1} style={{ margin: "18px 0" }} />
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="bd-row" style={{ display: "flex", justifyContent: "space-between", padding: "8px 0" }}>
+            <SkeletonLine width={120} height={16} />
+            <SkeletonLine width={50} height={16} />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="panel">

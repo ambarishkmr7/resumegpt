@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { SkeletonLine } from "./Skeleton.jsx";
+import Markdown from "./Markdown.jsx";
 
 export default function CoverLetterModal({ content, onClose }) {
   const [form, setForm] = useState({ job_title: "", company: "", job_description: "", tone: "professional" });
@@ -69,7 +71,25 @@ export default function CoverLetterModal({ content, onClose }) {
           <div className="spacer" />
           <button className="btn btn-ghost" onClick={onClose}>Close</button>
         </div>
-        {letter && <div className="cover-text">{letter}</div>}
+        {busy && !letter && (
+          <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: "50%",
+              background: "linear-gradient(90deg, #f0ece4 25%, #e8e4db 50%, #f0ece4 75%)",
+              backgroundSize: "200% 100%", animation: "sk-shimmer 1.5s infinite",
+              margin: "0 auto",
+            }} />
+            <div style={{ textAlign: "center", color: "var(--ink-soft)", fontSize: 14 }}>Generating your cover letter…</div>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <SkeletonLine key={i} width={i === 7 ? "55%" : i === 4 ? "80%" : "100%"} height={16} style={{ marginBottom: 6 }} />
+            ))}
+          </div>
+        )}
+        {letter && (
+          <div className="cover-text">
+            <Markdown>{letter}</Markdown>
+          </div>
+        )}
       </div>
     </div>
   );

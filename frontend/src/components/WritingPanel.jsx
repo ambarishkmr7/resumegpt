@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { SkeletonLine, SkeletonCircle } from "./Skeleton.jsx";
 
 export default function WritingPanel({ content }) {
   const [loading, setLoading] = useState(false);
@@ -25,6 +26,26 @@ export default function WritingPanel({ content }) {
       <button className="btn btn-primary" onClick={analyze} disabled={loading} style={{ width: "100%" }}>
         {loading ? "Analyzing writing…" : "🔍 Analyze My Resume Writing"}
       </button>
+
+      {loading && !result && (
+        <div className="writing-results" style={{ marginTop: 20 }}>
+          <div className="writing-summary" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginBottom: 24 }}>
+            <SkeletonCircle size={72} />
+            <SkeletonLine width={140} height={18} />
+          </div>
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="writing-section" style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <SkeletonLine width={140} height={18} />
+                <SkeletonBlock width={90} height={24} borderRadius={12} />
+              </div>
+              <SkeletonLine width="100%" height={16} style={{ marginBottom: 8 }} />
+              <SkeletonLine width="85%" height={16} style={{ marginBottom: 8 }} />
+              <SkeletonLine width="65%" height={16} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
 

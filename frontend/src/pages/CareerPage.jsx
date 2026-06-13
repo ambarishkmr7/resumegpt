@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import CareerChat from "../components/CareerChat.jsx";
 import Topbar from "../components/Topbar.jsx";
 import { api } from "../api/client.js";
+import Markdown from "../components/Markdown.jsx";
 
 function ConversationSkeleton() {
   return (
@@ -30,6 +31,12 @@ export default function CareerPage() {
       const response = await api.get("/api/agent/conversations");
       const convos = response.conversations || response.data?.conversations || [];
       setConversations(convos);
+
+      // Restore previously active thread from sessionStorage if it still exists
+      const savedThreadId = sessionStorage.getItem("career:activeThreadId");
+      if (savedThreadId && convos.some((c) => c.thread_id === savedThreadId)) {
+        setActiveThreadId(savedThreadId);
+      }
     } catch (e) {
       console.error("Failed to fetch conversations", e);
     } finally {
@@ -43,11 +50,13 @@ export default function CareerPage() {
 
   const handleNewChat = () => {
     setActiveThreadId(null);
+    sessionStorage.removeItem("career:activeThreadId");
     if (window.innerWidth <= 768) setSidebarOpen(false);
   };
 
   const handleSelectThread = (threadId) => {
     setActiveThreadId(threadId);
+    sessionStorage.setItem("career:activeThreadId", threadId);
     if (window.innerWidth <= 768) setSidebarOpen(false);
   };
 
@@ -57,7 +66,10 @@ export default function CareerPage() {
       setConversations((prev) => prev.filter((c) => c.thread_id !== threadId));
       if (activeThreadId === threadId) {
         setActiveThreadId(null);
+        sessionStorage.removeItem("career:activeThreadId");
       }
+      // Clean up cached chat messages for deleted thread
+      sessionStorage.removeItem(`career:chat:${threadId}`);
     } catch (e) {
       console.error("Failed to delete conversation", e);
     }
@@ -86,7 +98,9 @@ export default function CareerPage() {
                 onClick={() => handleSelectThread(conv.thread_id)}
               >
                 <div className="conv-title">{conv.title || "New Chat"}</div>
-                <div className="conv-preview">{conv.last_message || "Active session..."}</div>
+                <div className="conv-preview">
+                  <Markdown>{conv.title || "New Chat"}</Markdown>
+                </div>
                 <button
                   className="delete-conv-btn"
                   onClick={(e) => {
@@ -216,10 +230,39 @@ export default function CareerPage() {
         .conv-preview {
           font-size: 11px;
           color: #888;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
           margin-top: 4px;
+          max-height: 60px;
+          overflow: hidden;
+          line-height: 1.4;
+        }
+        .conv-preview .markdown-body {
+          font-size: 11px;
+          color: #888;
+          line-height: 1.4;
+        }
+        .conv-preview .markdown-body p { margin: 0 0 4px; }
+        .conv-preview .markdown-body p:last-child { margin-bottom: 0; }
+        .conv-preview .markdown-body ul,
+        .conv-preview .markdown-body ol { margin: 0 0 4px 12px; }
+        .conv-preview .markdown-body li { margin-bottom: 2px; }
+        .conv-preview .markdown-body h1,
+        .conv-preview .markdown-body h2,
+        .conv-preview .markdown-body h3,
+        .conv-preview .markdown-body h4 {
+          font-size: 12px;
+          margin: 0 0 4px;
+          color: #57514a;
+          font-weight: 600;
+        }
+        .conv-preview .markdown-body a.md-link { color: var(--accent); }
+        .conv-preview .markdown-body code {
+          font-size: 10px;
+          padding: 1px 3px;
+        }
+        .conv-preview .markdown-body pre,
+        .conv-preview .markdown-body blockquote,
+        .conv-preview .markdown-body table {
+          display: none;
         }
         .delete-conv-btn {
           position: absolute;

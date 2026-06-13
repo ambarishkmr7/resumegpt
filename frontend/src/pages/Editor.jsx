@@ -7,10 +7,100 @@ import ResumePreview from "../components/ResumePreview.jsx";
 import TemplateSelector from "../components/TemplateSelector.jsx";
 import ATSPanel from "../components/ATSPanel.jsx";
 import AIToolsPanel from "../components/AIToolsPanel.jsx";
-import CareerPanel from "../components/CareerPanel.jsx";
 import ElitePanel from "../components/ElitePanel.jsx";
 import CoverLetterModal from "../components/CoverLetterModal.jsx";
 import SubscriptionModal from "../components/SubscriptionModal.jsx";
+import { SkeletonBlock, SkeletonLine } from "../components/Skeleton.jsx";
+
+function EditorSkeleton() {
+  return (
+    <>
+      <Topbar />
+      <div className="container">
+        {/* Toolbar skeleton — matches .toolbar flex layout */}
+        <div className="toolbar">
+          <SkeletonBlock width={80} height={34} borderRadius={6} />
+          <SkeletonBlock width={220} height={34} borderRadius={6} />
+          <SkeletonBlock width={100} height={14} borderRadius={4} />
+          <div className="spacer" />
+          <SkeletonBlock width={100} height={34} borderRadius={6} />
+          <SkeletonBlock width={110} height={34} borderRadius={6} />
+          <SkeletonBlock width={100} height={34} borderRadius={6} />
+          <SkeletonBlock width={100} height={34} borderRadius={6} />
+          <SkeletonBlock width={60} height={34} borderRadius={6} />
+          <SkeletonBlock width={80} height={34} borderRadius={6} />
+        </div>
+
+        {/* Editor layout — matches .editor-layout grid: 160px minmax(0,340px) 1fr */}
+        <div className="editor-layout">
+
+          {/* Left ad sidebar — 160px */}
+          <aside className="editor-ad-sidebar">
+            {[1, 2].map((i) => (
+              <div key={i} className="ad-slot" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: 14 }}>
+                <SkeletonBlock width={60} height={12} borderRadius={4} />
+                <SkeletonBlock width={44} height={44} borderRadius={10} />
+                <SkeletonLine width="85%" height={14} />
+                <SkeletonLine width="100%" height={11} />
+                <SkeletonBlock width="70%" height={24} borderRadius={6} style={{ marginTop: 4 }} />
+              </div>
+            ))}
+          </aside>
+
+          {/* Middle form area — minmax(0, 340px) */}
+          <div>
+            {/* Tab switcher: Edit Resume / Templates */}
+            <div className="right-tabs" style={{ marginBottom: 14 }}>
+              <SkeletonBlock width={110} height={34} borderRadius={8} />
+              <SkeletonBlock width={110} height={34} borderRadius={8} />
+            </div>
+            {/* Form field skeletons — match ResumeForm layout */}
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div key={i} style={{ marginBottom: 16 }}>
+                <SkeletonLine width={90 + (i % 3) * 20} height={13} style={{ marginBottom: 6 }} />
+                {i === 3 || i === 6 ? (
+                  <SkeletonBlock width="100%" height={80} borderRadius={8} />
+                ) : (
+                  <SkeletonBlock width="100%" height={42} borderRadius={8} />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Right sticky panel — 1fr */}
+          <div className="sticky">
+            {/* Right-column tabs: Preview / ATS / AI / Career / Elite */}
+            <div className="right-tabs">
+              <SkeletonBlock width={70} height={32} borderRadius={8} />
+              <SkeletonBlock width={80} height={32} borderRadius={8} />
+              <SkeletonBlock width={70} height={32} borderRadius={8} />
+              <SkeletonBlock width={65} height={32} borderRadius={8} />
+              <SkeletonBlock width={60} height={32} borderRadius={8} />
+            </div>
+            {/* Preview area — large block simulating resume preview */}
+            <div style={{ marginTop: 14, background: "#fff", border: "1px solid #e2dccf", borderRadius: 10, padding: 20, minHeight: 520 }}>
+              {/* Simulate resume header */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                <SkeletonBlock width="40%" height={22} borderRadius={4} />
+                <SkeletonBlock width="60%" height={14} borderRadius={4} />
+                <SkeletonBlock width="50%" height={12} borderRadius={4} />
+              </div>
+              {/* Simulate resume sections */}
+              {[1, 2, 3, 4].map((section) => (
+                <div key={section} style={{ marginBottom: 18 }}>
+                  <SkeletonBlock width="35%" height={16} borderRadius={4} style={{ marginBottom: 10 }} />
+                  {[1, 2, 3].map((line) => (
+                    <SkeletonLine key={line} width={line === 3 ? "65%" : "100%"} height={12} style={{ marginBottom: 6 }} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 export default function Editor() {
   const { id } = useParams();
@@ -139,7 +229,7 @@ export default function Editor() {
   };
 
   if (error && !content) return <><Topbar /><div className="container"><div className="error">{error}</div></div></>;
-  if (!content) return <><Topbar /><div className="container">Loading…</div></>;
+  if (!content) return <EditorSkeleton />;
 
   const activeTpl = templates.find((t) => t.id === templateId) || null;
   const isPdf = originalType.includes("pdf");
@@ -213,8 +303,6 @@ export default function Editor() {
                 onClick={() => setRightTab("ats")}>ATS Score</button>
               <button className={`rtab ${rightTab === "ai" ? "active" : ""}`}
                 onClick={() => setRightTab("ai")}>AI Tools</button>
-              <button className={`rtab ${rightTab === "career" ? "active" : ""}`}
-                onClick={() => setRightTab("career")}>Career</button>
               <button className={`rtab ${rightTab === "elite" ? "active" : ""}`}
                 onClick={() => setRightTab("elite")}>✨ Elite</button>
             </div>
@@ -257,10 +345,6 @@ export default function Editor() {
             {rightTab === "ai" && (
               <AIToolsPanel content={content} resumeId={id}
                 onApplyVariant={(v) => { setContent(v); setStatus("Applied variant"); }} />
-            )}
-
-            {rightTab === "career" && (
-              <CareerPanel content={content} />
             )}
 
             {rightTab === "elite" && (

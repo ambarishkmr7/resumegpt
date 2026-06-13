@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { SkeletonLine, SkeletonBlock } from "./Skeleton.jsx";
 
 export default function CareerPanel({ content }) {
   const [loading, setLoading] = useState(false);
@@ -46,6 +47,28 @@ export default function CareerPanel({ content }) {
       </div>
 
       {error && <div className="error">{error}</div>}
+
+      {loading && !jobs && (
+        <div className="career-results">
+          <div className="career-global-links" style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+            {[1, 2, 3, 4].map((i) => (
+              <SkeletonBlock key={i} width={120} height={38} borderRadius={8} />
+            ))}
+          </div>
+          <SkeletonLine width={200} height={20} style={{ marginBottom: 16 }} />
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} style={{ background: "#fff", border: "1px solid #e2dccf", borderRadius: 12, padding: 18, marginBottom: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              <SkeletonLine width="65%" height={18} />
+              <SkeletonLine width="45%" height={14} />
+              <SkeletonLine width="85%" height={14} />
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <SkeletonBlock width={90} height={32} borderRadius={6} />
+                <SkeletonBlock width={90} height={32} borderRadius={6} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {jobs && (
         <div className="career-results">

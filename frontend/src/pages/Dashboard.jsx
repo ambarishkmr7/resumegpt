@@ -6,6 +6,63 @@ import Footer from "../components/Footer.jsx";
 import SubscriptionModal from "../components/SubscriptionModal.jsx";
 import { emptyResume } from "../lib";
 import AdSlot from "../components/AdSlot.jsx";
+import { SkeletonLine, SkeletonBlock } from "../components/Skeleton.jsx";
+
+function DashboardSkeleton() {
+  return (
+    <>
+      <Topbar />
+      {/* Hero skeleton */}
+      <section className="hero">
+        <div className="hero-inner" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <SkeletonBlock width="60%" height={40} borderRadius={8} />
+          <SkeletonBlock width="85%" height={20} borderRadius={6} />
+          <SkeletonBlock width="75%" height={20} borderRadius={6} />
+          <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+            <SkeletonBlock width={200} height={52} borderRadius={12} />
+            <SkeletonBlock width={200} height={52} borderRadius={12} />
+          </div>
+        </div>
+      </section>
+      <div className="side-ad-wrapper" style={{ display: "flex", maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>
+        <div className="container" style={{ flex: 1, minWidth: 0 }}>
+          {/* Resume grid skeleton */}
+          <section className="section">
+            <SkeletonBlock width={160} height={30} borderRadius={6} style={{ marginBottom: 20 }} />
+            <div className="resume-grid">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="resume-card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <SkeletonLine width="75%" height={20} />
+                  <SkeletonLine width="55%" height={14} />
+                  <SkeletonLine width="45%" height={14} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <SkeletonBlock width={70} height={34} borderRadius={8} />
+                    <SkeletonBlock width={70} height={34} borderRadius={8} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+          {/* Stats skeleton */}
+          <section className="section" style={{ background: "#fffdf8", borderRadius: 16, padding: "32px 28px", border: "1px solid #e2dccf" }}>
+            <SkeletonBlock width="55%" height={28} borderRadius={6} style={{ marginBottom: 16 }} />
+            <SkeletonBlock width="85%" height={18} borderRadius={4} style={{ marginBottom: 10 }} />
+            <SkeletonBlock width="75%" height={18} borderRadius={4} style={{ marginBottom: 24 }} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 16 }}>
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} style={{ textAlign: "center", padding: 20, background: "#fff", borderRadius: 12, border: "1px solid #e2dccf", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                  <SkeletonBlock width={80} height={36} borderRadius={6} />
+                  <SkeletonLine width="65%" height={14} />
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </div>
+      <Footer />
+    </>
+  );
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -20,11 +77,13 @@ export default function Dashboard() {
   const [newYears, setNewYears] = useState(3);
   const [newName, setNewName] = useState("");
   const [siteStats, setSiteStats] = useState({ total_resumes: null, ats_pass_rate: null });
+  const [profilePct, setProfilePct] = useState(null);
   const fileRef = useRef();
 
   const load = () => {
     api.listResumes().then(setResumes).catch((e) => setError(e.message)).finally(() => setLoading(false));
     api.subscriptionStatus().then(setSubStatus).catch(() => {});
+    api.getProfile().then((p) => setProfilePct(p.profile_completion ?? 0)).catch(() => {});
   };
 
   useEffect(() => {
@@ -58,6 +117,8 @@ export default function Dashboard() {
     setResumes((prev) => prev.filter((r) => r.id !== id));
     try { await api.deleteResume(id); } catch { load(); }
   };
+
+  if (loading) return <DashboardSkeleton />;
 
   const isSubscribed = subStatus?.is_subscribed;
   const statResumes = siteStats.total_resumes !== null ? siteStats.total_resumes.toLocaleString("en-IN") : "…";
@@ -98,6 +159,85 @@ export default function Dashboard() {
           </div>
         </div>
       </section>
+
+      {/* ── Profile Completion Card ── */}
+      {profilePct !== null && profilePct < 100 && (
+        <div style={{ maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>
+          <div
+            onClick={() => navigate("/profile")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 20,
+              padding: "18px 24px",
+              background: "var(--paper-2)",
+              border: "1px solid var(--line)",
+              borderRadius: 14,
+              boxShadow: "var(--shadow)",
+              cursor: "pointer",
+              marginBottom: 18,
+              transition: "transform 0.1s",
+            }}
+          >
+            {/* Circular progress */}
+            <svg width="56" height="56" viewBox="0 0 56 56" style={{ flexShrink: 0 }}>
+              <circle cx="28" cy="28" r="24" fill="none" stroke="var(--line)" strokeWidth="5" />
+              <circle
+                cx="28" cy="28" r="24" fill="none"
+                stroke={profilePct >= 70 ? "var(--good)" : profilePct >= 40 ? "var(--warn)" : "var(--crit)"}
+                strokeWidth="5"
+                strokeDasharray={`${(profilePct / 100) * 150.8} 150.8`}
+                strokeLinecap="round"
+                transform="rotate(-90 28 28)"
+              />
+              <text x="28" y="32" textAnchor="middle" fontSize="13" fontWeight="700" fill="var(--ink)" fontFamily="var(--display)">
+                {profilePct}%
+              </text>
+            </svg>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, fontFamily: "var(--display)", marginBottom: 2 }}>
+                {profilePct === 0 ? "Complete your profile" : `Your profile is ${profilePct}% complete`}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.5 }}>
+                {profilePct < 40
+                  ? "Add your personal details, education, experience, skills, and career preferences to get better job matches."
+                  : profilePct < 70
+                  ? "You're making progress! Fill in the remaining sections to unlock personalized recommendations."
+                  : "Almost there! Complete the last few sections for a fully optimized profile."}
+              </div>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              <span className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }}>
+                {profilePct === 0 ? "Get Started" : "Complete Now"} →
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+      {profilePct !== null && profilePct === 100 && (
+        <div style={{ maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "14px 24px",
+              background: "#e6f0e9",
+              border: "1px solid #b7d9c0",
+              borderRadius: 14,
+              marginBottom: 18,
+            }}
+          >
+            <span style={{ fontSize: 20 }}>✅</span>
+            <span style={{ fontWeight: 600, color: "var(--good)", fontSize: 14 }}>
+              Your profile is 100% complete — you'll get the best job matches!
+            </span>
+            <button className="link-btn" onClick={() => navigate("/profile")} style={{ marginLeft: "auto", fontSize: 13 }}>
+              Edit Profile
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Side-ad wrapper ── */}
       <div className="side-ad-wrapper" style={{ display: "flex", alignItems: "flex-start", maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>

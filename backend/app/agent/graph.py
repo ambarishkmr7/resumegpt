@@ -137,7 +137,13 @@ async def agent_chat(user_id: str, thread_id: str, message: str) -> dict[str, An
 
     # --- NEW: Save thread metadata to Store so History loads properly ---
     try:
-        title = message[:35] + "..." if len(message) > 35 else message
+        # Preserve the title of the FIRST question asked in this thread
+        existing_item = await store.aget(("agent_threads", user_id), thread_id)
+        if existing_item and existing_item.value and existing_item.value.get("title"):
+            title = existing_item.value["title"]
+        else:
+            title = message[:35] + "..." if len(message) > 35 else message
+
         preview = response_text[:50] + "..." if len(response_text) > 50 else response_text
         thread_data = {
             "thread_id": thread_id,

@@ -4,6 +4,35 @@ import { api } from "../api/client";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
 import { ContactForm, FeedbackForm } from "../components/ContactForms.jsx";
+import { SkeletonBlock, SkeletonLine } from "../components/Skeleton.jsx";
+import Markdown from "../components/Markdown.jsx";
+
+function CmsSkeleton() {
+  return (
+    <>
+      <Topbar />
+      <div className="container cms-container">
+        <SkeletonBlock width={90} height={38} borderRadius={8} style={{ marginBottom: 20 }} />
+        <SkeletonBlock width="55%" height={36} borderRadius={6} style={{ marginBottom: 10 }} />
+        <SkeletonBlock width="35%" height={18} borderRadius={4} style={{ marginBottom: 28 }} />
+        {/* Content paragraph skeletons */}
+        {Array.from({ length: 10 }).map((_, i) => (
+          <SkeletonLine key={i} width={i % 3 === 0 ? "45%" : i % 2 === 0 ? "90%" : "100%"} height={18} style={{ marginBottom: 12 }} />
+        ))}
+        {/* Extra blocks for subscription-like pages */}
+        <div style={{ marginTop: 32, padding: 28, background: "#fff", border: "1px solid #e2dccf", borderRadius: 12 }}>
+          <SkeletonBlock width={140} height={18} borderRadius={4} style={{ marginBottom: 14 }} />
+          <SkeletonBlock width={200} height={40} borderRadius={6} style={{ marginBottom: 10 }} />
+          <SkeletonBlock width={220} height={18} borderRadius={4} style={{ marginBottom: 20 }} />
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonLine key={i} width="75%" height={16} style={{ marginBottom: 10 }} />
+          ))}
+        </div>
+      </div>
+      <Footer />
+    </>
+  );
+}
 
 export default function CmsPage() {
   const { slug } = useParams();
@@ -18,46 +47,6 @@ export default function CmsPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [slug]);
-
-  // Convert plain-text CMS markdown to React elements
-  const renderContent = (text) => {
-    if (!text) return null;
-
-    // If content looks like it contains HTML tags, render it directly
-    if (/<[a-z][\s\S]*>/i.test(text)) {
-      return (
-        <div
-          className="cms-html-body"
-          dangerouslySetInnerHTML={{ __html: text }}
-        />
-      );
-    }
-
-    return text.split("\n").map((line, i) => {
-      if (line.startsWith("**") && line.endsWith("**")) {
-        return <h3 key={i} className="cms-h3">{line.replace(/\*\*/g, "")}</h3>;
-      }
-      if (line.startsWith("**")) {
-        const parts = line.split("**").filter(Boolean);
-        return (
-          <p key={i}>
-            {parts.map((p, j) => j % 2 === 0 ? <strong key={j}>{p}</strong> : p)}
-          </p>
-        );
-      }
-      if (line.startsWith("• ") || line.startsWith("- ")) {
-        return <li key={i} className="cms-li">{line.slice(2)}</li>;
-      }
-      if (line.startsWith("Q:") || line.startsWith("**Q:")) {
-        return <p key={i} className="cms-q">{line.replace(/\*\*/g, "")}</p>;
-      }
-      if (line.startsWith("A:") || line.startsWith("**A:")) {
-        return <p key={i} className="cms-a">{line.replace(/\*\*/g, "")}</p>;
-      }
-      if (!line.trim()) return <br key={i} />;
-      return <p key={i}>{line}</p>;
-    });
-  };
 
   // Convert plain-text subscription content into a styled pricing card
   const renderPricingFromText = (rawText, pageTitle) => {
@@ -110,14 +99,14 @@ export default function CmsPage() {
       <Topbar />
       <div className="container cms-container">
         <Link to="/" className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }}>← Back</Link>
-        {loading && <p>Loading…</p>}
-        {error && <div className="error">{error}</div>}
+        {loading && <CmsSkeleton />}
+        {!loading && error && <div className="error">{error}</div>}
         {page && (
           <div className="cms-page">
             <h1 className="cms-title">{page.icon} {page.title.replace(/^[^\s]+\s/, "")}</h1>
             {slug === "subscription"
               ? renderPricingFromText(page.content, page.title)
-              : <div className="cms-body">{renderContent(page.content)}</div>
+              : <div className="cms-body"><Markdown>{page.content}</Markdown></div>
             }
 
             {/* Contact form */}

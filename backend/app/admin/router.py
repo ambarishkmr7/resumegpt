@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from app.core.deps import get_current_user
 from app.database import get_db
-from app.models import User, Resume, Subscription, CmsPage, VisitorLog
+from app.models import User, Resume, Subscription, CmsPage, VisitorLog, Payment
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -33,8 +33,8 @@ class DashboardStats(BaseModel):
     elite_subscribers: int = 0
     total_resumes: int = 0
     total_visitors: int = 0
-    unregistered_visitors: int = 0
     users_not_subscribed: int = 0
+    total_revenue: int = 0
     recent_users: List[dict] = []
     recent_subscribers: List[dict] = []
 
@@ -73,15 +73,17 @@ def dashboard(user: User = Depends(require_admin), db: Session = Depends(get_db)
     recent_users = db.query(User).order_by(User.created_at.desc()).limit(10).all()
     recent_subs = db.query(Subscription).filter(Subscription.status == "active").order_by(Subscription.created_at.desc()).limit(10).all()
 
+    # Calculate total revenue from actual subscription amounts
+    total_revenue = db.query(func.coalesce(func.sum(Subscription.amount), 0)).filter(Subscription.status == "active").scalar()
+
     return DashboardStats(
         total_users=total_users,
         total_subscribers=total_subs,
-        
         elite_subscribers=elite_subs,
         total_resumes=total_resumes,
         total_visitors=total_visitors,
-        unregistered_visitors=max(total_visitors - total_users, 0),
         users_not_subscribed=users_not_subbed,
+        total_revenue=total_revenue,
         recent_users=[{"id": u.id, "email": u.email, "name": u.full_name, "date": u.created_at.isoformat()} for u in recent_users],
         recent_subscribers=[{"id": s.id, "user_id": s.user_id, "plan": s.plan, "amount": s.amount, "date": s.created_at.isoformat()} for s in recent_subs],
     )
@@ -114,7 +116,7 @@ def _seed_cms(db: Session):
             db.add(CmsPage(slug=slug, title=title, content=content, icon=icon))
         else:
             # Reset content if it was corrupted with HTML/JSX tags by the admin editor
-            if existing.content and _re.search(r'<[a-zA-Z][^>]*className', existing.content):
+            if existing.content and _re.search(r'<[a-zA-Z][^>]*/?>', existing.content):
                 existing.content = content
                 existing.title = title
     db.commit()
@@ -187,14 +189,42 @@ def list_public_cms_pages(db: Session = Depends(get_db)):
                        updated_at=p.updated_at.isoformat() if p.updated_at else None) for p in pages]
 
 
-# ---------- Make first user admin ----------
+# ---------- Payments ----------
+
+class PaymentOut(BaseModel):
+    id: str
+    user_id: str
+    user_email: str = ""
+    plan: str
+    amount: int
+    currency: str
+    status: str
+    created_at: Optional[str] = None
+
+
+@router.get("/payments", response_model=List[PaymentOut])
+def list_payments(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Return payment history with user email."""
+    payments = db.query(Payment).order_by(Payment.created_at.desc()).limit(50).all()
+    # Batch-fetch user emails
+    user_ids = [p.user_id for p in payments]
+    users = {u.id: u.email for u in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    return [PaymentOut(
+        id=p.id, user_id=p.user_id, user_email=users.get(p.user_id, ""),
+        plan=p.plan, amount=p.amount, currency=p.currency,
+        status=p.status, created_at=p.created_at.isoformat() if p.created_at else None,
+    ) for p in payments]
+
+
+# ---------- Make first user admin (admin-only) ----------
 
 @router.post("/make-admin")
-def make_first_admin(db: Session = Depends(get_db)):
-    """One-time setup: makes the first registered user an admin."""
+def make_first_admin(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """One-time setup: makes the first registered user an admin. Requires existing admin auth."""
     first_user = db.query(User).order_by(User.created_at.asc()).first()
     if not first_user:
         raise HTTPException(status_code=404, detail="No users found")
     first_user.is_admin = True
     db.commit()
+    logger.info("User promoted to admin via make-admin: %s (by admin=%s)", first_user.email, user.id)
     return {"message": f"User {first_user.email} is now admin"}

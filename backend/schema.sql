@@ -10,6 +10,7 @@
 
 -- Drop existing tables in correct order (child tables first)
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS user_profiles;
 DROP TABLE IF EXISTS visitor_logs;
 DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS subscriptions;
@@ -41,6 +42,9 @@ CREATE TABLE resumes (
     content JSON NOT NULL,
     ats_score INT DEFAULT NULL,
     original_filename VARCHAR(500) DEFAULT NULL,
+    storage_key VARCHAR(500) DEFAULT NULL,
+    career_analysis JSON DEFAULT NULL,
+    career_roadmap JSON DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_resumes_user_id (user_id),
@@ -53,7 +57,7 @@ CREATE TABLE subscriptions (
     user_id VARCHAR(64) NOT NULL UNIQUE,
     plan VARCHAR(50) DEFAULT 'elite',
     status VARCHAR(50) DEFAULT 'active',
-    amount INT DEFAULT 299,
+    amount INT DEFAULT 1999,
     payment_id VARCHAR(255) DEFAULT NULL,
     order_id VARCHAR(255) DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -69,7 +73,7 @@ CREATE TABLE payments (
     razorpay_payment_id VARCHAR(255) DEFAULT NULL,
     razorpay_signature VARCHAR(512) DEFAULT NULL,
     plan VARCHAR(50) DEFAULT 'elite',
-    amount INT DEFAULT 299,
+    amount INT DEFAULT 1999,
     currency VARCHAR(10) DEFAULT 'INR',
     status VARCHAR(50) DEFAULT 'created',
     error_message TEXT DEFAULT NULL,
@@ -117,7 +121,20 @@ CREATE TABLE otp_verifications (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
--- 8. Contact Messages & Feedback table
+-- 8. User Profiles table
+CREATE TABLE user_profiles (
+    user_id VARCHAR(64) NOT NULL PRIMARY KEY,
+    personal JSON NOT NULL DEFAULT (JSON_OBJECT()),
+    education JSON NOT NULL DEFAULT (JSON_ARRAY()),
+    experience JSON NOT NULL DEFAULT (JSON_ARRAY()),
+    skills JSON NOT NULL DEFAULT (JSON_ARRAY()),
+    preferences JSON NOT NULL DEFAULT (JSON_OBJECT()),
+    profile_photo_key VARCHAR(500) DEFAULT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 9. Contact Messages & Feedback table
 CREATE TABLE IF NOT EXISTS contact_messages (
     id VARCHAR(64) NOT NULL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,

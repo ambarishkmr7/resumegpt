@@ -22,6 +22,7 @@ class User(Base):
     reset_token_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     resumes = relationship("Resume", back_populates="owner", cascade="all, delete-orphan")
+    profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class Resume(Base):
@@ -47,7 +48,7 @@ class Subscription(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True, index=True)
     plan = Column(String, default="elite")
     status = Column(String, default="active")
-    amount = Column(Integer, default=299)
+    amount = Column(Integer, default=1999)
     payment_id = Column(String, nullable=True)
     order_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -98,6 +99,19 @@ class OtpVerification(Base):
     otp_code = Column(String, nullable=False)
     verified = Column(Boolean, default=False)
     expires_at = Column(DateTime, nullable=False)
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    user_id = Column(String, ForeignKey("users.id"), primary_key=True)
+    personal = Column(JSON, nullable=False, default=dict)
+    education = Column(JSON, nullable=False, default=list)
+    experience = Column(JSON, nullable=False, default=list)
+    skills = Column(JSON, nullable=False, default=list)
+    preferences = Column(JSON, nullable=False, default=dict)
+    profile_photo_key = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user = relationship("User", back_populates="profile")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

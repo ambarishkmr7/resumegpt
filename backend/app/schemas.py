@@ -385,6 +385,69 @@ class GenerateSampleRequest(BaseModel):
     name: str = "Your Name"
 
 
+# ---------- User Profile ----------
+
+class PersonalInfo(BaseModel):
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
+    linkedin_url: str = ""
+    headline: str = ""
+    summary: str = ""
+
+
+class ProfileEducationItem(BaseModel):
+    degree: str = ""
+    school: str = ""
+    location: str = ""
+    start_year: str = ""
+    end_year: str = ""
+    grade: str = ""
+
+
+class ProfileExperienceItem(BaseModel):
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    current: bool = False
+    description: str = ""
+
+
+class ProfilePreferences(BaseModel):
+    desired_role: str = ""
+    preferred_locations: List[str] = Field(default_factory=list)
+    expected_salary_min: str = ""
+    expected_salary_max: str = ""
+    job_type: str = ""        # full-time | part-time | contract | freelance
+    remote_preference: str = ""  # remote | hybrid | onsite | flexible
+
+
+class UserProfileUpdate(BaseModel):
+    personal: Optional[PersonalInfo] = None
+    education: Optional[List[ProfileEducationItem]] = None
+    experience: Optional[List[ProfileExperienceItem]] = None
+    skills: Optional[List[str]] = None
+    preferences: Optional[ProfilePreferences] = None
+
+
+class UserProfileOut(BaseModel):
+    user_id: str
+    personal: PersonalInfo = Field(default_factory=PersonalInfo)
+    education: List[ProfileEducationItem] = Field(default_factory=list)
+    experience: List[ProfileExperienceItem] = Field(default_factory=list)
+    skills: List[str] = Field(default_factory=list)
+    preferences: ProfilePreferences = Field(default_factory=ProfilePreferences)
+    profile_photo_key: Optional[str] = None
+    profile_completion: int = 0
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # Resolve forward references for ResumeOut (which references CareerAnalysisResponse
 # and CareerRoadmapResponse defined earlier in this file via string annotations)
 ResumeOut.model_rebuild()

@@ -298,7 +298,9 @@ export const api = {
       body: JSON.stringify(body),
     }).then(handle),
   makeAdmin: () =>
-    fetch(`${BASE}/api/admin/make-admin`, { method: "POST" }).then(handle),
+    fetch(`${BASE}/api/admin/make-admin`, { method: "POST", headers: authHeaders() }).then(handle),
+  adminPayments: () =>
+    fetch(`${BASE}/api/admin/payments`, { headers: authHeaders() }).then(handle),
 
   // ---- Public CMS ----
   trendingJobs: (resumeContent) =>
@@ -317,6 +319,28 @@ export const api = {
     fetch(`${BASE}/api/admin/public/cms`).then(handle),
   getSubscriptionPage: () =>
     fetch(`${BASE}/api/admin/public/cms/subscription`).then(handle),
+
+
+  // ---- Profile ----
+  getProfile: () =>
+    fetch(`${BASE}/api/profile/me`, { headers: authHeaders() }).then(handle),
+
+  updateProfile: (body) =>
+    fetch(`${BASE}/api/profile/me`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+
+  uploadProfilePhoto: (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return fetch(`${BASE}/api/profile/photo`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    }).then(handle);
+  },
 
   // ---- Generic HTTP helpers ----
   get: (url) => fetch(`${BASE}${url}`, { headers: authHeaders() }).then(handle),

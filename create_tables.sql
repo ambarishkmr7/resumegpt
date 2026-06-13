@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS visitor_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 6. User Profiles table
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id VARCHAR(64) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    personal JSONB NOT NULL DEFAULT '{}',
+    education JSONB NOT NULL DEFAULT '[]',
+    experience JSONB NOT NULL DEFAULT '[]',
+    skills JSONB NOT NULL DEFAULT '[]',
+    preferences JSONB NOT NULL DEFAULT '{}',
+    profile_photo_key VARCHAR(500),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================
 -- Seed default admin user
 -- Email: admin@resumegpt.com
