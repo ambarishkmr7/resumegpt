@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api/client";
+import { api, BASE } from "../api/client";
 
 const AuthContext = createContext(null);
 
@@ -37,7 +37,7 @@ export function AuthProvider({ children }) {
     api.getProfile()
       .then((p) => {
         if (p.profile_photo_key) {
-          setProfilePhoto(`/api/profile/photo?key=${p.profile_photo_key}`);
+          setProfilePhoto(`${BASE}/api/profile/photo?key=${p.profile_photo_key}`);
         }
       })
       .catch(() => {});

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import AudioInterview from "./AudioInterview.jsx";
-import CareerChat from "./CareerChat.jsx";
 import { auth } from "../firebase.js";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { SkeletonLine, SkeletonBlock } from "./Skeleton.jsx";
 
 export default function ElitePanel({ content }) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -54,7 +55,7 @@ export default function ElitePanel({ content }) {
     { id: "counseling", icon: "🤖", label: "Career Counseling" },
     { id: "interview", icon: "🎤", label: "Mock Interview" },
     { id: "agent", icon: "🚀", label: "AI Job Agent" },
-    { id: "career-chat", icon: "💬", label: "Career Chat" },
+    { id: "career-chat", icon: "💬", label: "Career Chat", href: "/career" },
   ];
 
   // Init invisible reCAPTCHA once after mount.
@@ -211,11 +212,12 @@ export default function ElitePanel({ content }) {
     <div className="panel elite-panel">
       {/* Always in DOM — Firebase RecaptchaVerifier anchors to this div on mount */}
       <div id="recaptcha-container" style={{ position: "absolute", visibility: "hidden" }} />
+
       <h3>✨ Elite AI Tools</h3>
       <div className="ai-tools-grid">
         {tools.map(t => (
           <button key={t.id} className={`ai-tool-btn ${tab === t.id ? "active" : ""}`}
-            onClick={() => { setTab(t.id); setAudioMode(false); }} disabled={loading && tab !== t.id}>
+            onClick={() => { if (t.href) { navigate(t.href); return; } setTab(t.id); setAudioMode(false); }} disabled={loading && tab !== t.id}>
             <span className="ai-tool-icon">{t.icon}</span><span>{t.label}</span>
           </button>
         ))}
@@ -496,11 +498,6 @@ export default function ElitePanel({ content }) {
             </div>
           )}
         </div>
-      )}
-
-      {/* ======== CAREER CHAT ======== */}
-      {tab === "career-chat" && (
-        <CareerChat />
       )}
     </div>
   );

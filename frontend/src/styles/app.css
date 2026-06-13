@@ -625,28 +625,20 @@ input:focus, textarea:focus, select:focus {
 .pricing-cta-note { padding: 16px 28px 24px; font-size: 13px; color: rgba(255,255,255,.55); border-top: 1px solid rgba(255,255,255,.08); }
 
 /* ============================== ADMIN ============================== */
-.admin-container { max-width: 960px; padding: 24px 16px 80px; }
-.admin-tabs { display: flex; gap: 0; margin-bottom: 20px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); flex-wrap: wrap; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.admin-container { max-width: 960px; }
+.admin-tabs { display: flex; gap: 0; margin-bottom: 20px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .stat-card { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 18px; text-align: center; }
 .stat-card.accent { background: var(--accent-soft); border-color: var(--accent); }
-.stat-num { font-size: 28px; font-weight: 800; color: var(--ink); line-height: 1; word-break: break-all; }
+.stat-num { font-size: 32px; font-weight: 800; color: var(--ink); line-height: 1; }
 .stat-card.accent .stat-num { color: var(--accent); }
-.stat-label { font-size: 11px; color: var(--ink-soft); margin-top: 6px; text-transform: uppercase; letter-spacing: .06em; }
+.stat-label { font-size: 12px; color: var(--ink-soft); margin-top: 6px; text-transform: uppercase; letter-spacing: .06em; }
 .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .admin-table th { text-align: left; padding: 10px 12px; background: var(--paper-2); border-bottom: 2px solid var(--line); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .06em; color: var(--ink-soft); }
 .admin-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .plan-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .plan-badge.pro { background: #dbeafe; color: #1e3a8a; }
 .plan-badge.elite { background: #fef3c7; color: #92400e; }
-
-/* Payment status badges */
-.payment-status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: capitalize; }
-.payment-status.status-created { background: #e0e7ff; color: #3730a3; }
-.payment-status.status-captured,
-.payment-status.status-success { background: #dcfce7; color: #15803d; }
-.payment-status.status-failed { background: #fee2e2; color: #dc2626; }
-.payment-status.status-refunded { background: #fef3c7; color: #92400e; }
 
 /* CMS editor in admin */
 .cms-card { border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; background: var(--paper); }
@@ -658,13 +650,7 @@ input:focus, textarea:focus, select:focus {
 .cms-editor-pane { display: flex; flex-direction: column; }
 .cms-editor-pane-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin-bottom: 6px; }
 .cms-editor-preview { background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-height: 300px; max-height: 500px; overflow-y: auto; font-size: 14px; }
-@media (max-width: 768px) {
-  .cms-editor-panes { grid-template-columns: 1fr; }
-  .admin-container { padding: 16px 10px 60px; }
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
-  .admin-table { font-size: 12px; }
-  .admin-table th, .admin-table td { padding: 8px 6px; }
-}
+@media (max-width: 768px) { .cms-editor-panes { grid-template-columns: 1fr; } }
 
 /* ============================== SUBSCRIPTION PLAN CARDS ============================== */
 .plan-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }

@@ -5,6 +5,26 @@ import Topbar from "../components/Topbar.jsx";
 import { api } from "../api/client.js";
 import Markdown from "../components/Markdown.jsx";
 
+function timeAgo(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  const now = new Date();
+  const seconds = Math.floor((now - date) / 1000);
+  if (seconds < 60) return "Just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr${hours > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days > 1 ? "s" : ""} ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks} wk${weeks > 1 ? "s" : ""} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} mo${months > 1 ? "s" : ""} ago`;
+  const years = Math.floor(days / 365);
+  return `${years} yr${years > 1 ? "s" : ""} ago`;
+}
+
 function ConversationSkeleton() {
   return (
     <>
@@ -98,8 +118,8 @@ export default function CareerPage() {
                 onClick={() => handleSelectThread(conv.thread_id)}
               >
                 <div className="conv-title">{conv.title || "New Chat"}</div>
-                <div className="conv-preview">
-                  <Markdown>{conv.title || "New Chat"}</Markdown>
+                <div className="conv-meta">
+                  <span className="conv-time">{timeAgo(conv.updated_at)}</span>
                 </div>
                 <button
                   className="delete-conv-btn"
@@ -227,37 +247,20 @@ export default function CareerPage() {
           text-overflow: ellipsis;
           padding-right: 20px;
         }
-        .conv-preview {
-          font-size: 11px;
-          color: #888;
+        .conv-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
           margin-top: 4px;
-          max-height: 60px;
-          overflow: hidden;
-          line-height: 1.4;
         }
-        .conv-preview .markdown-body {
+        .conv-time {
           font-size: 11px;
-          color: #888;
-          line-height: 1.4;
+          color: #999;
+          white-space: nowrap;
         }
-        .conv-preview .markdown-body p { margin: 0 0 4px; }
-        .conv-preview .markdown-body p:last-child { margin-bottom: 0; }
-        .conv-preview .markdown-body ul,
-        .conv-preview .markdown-body ol { margin: 0 0 4px 12px; }
-        .conv-preview .markdown-body li { margin-bottom: 2px; }
-        .conv-preview .markdown-body h1,
-        .conv-preview .markdown-body h2,
-        .conv-preview .markdown-body h3,
-        .conv-preview .markdown-body h4 {
-          font-size: 12px;
-          margin: 0 0 4px;
-          color: #57514a;
-          font-weight: 600;
-        }
-        .conv-preview .markdown-body a.md-link { color: var(--accent); }
-        .conv-preview .markdown-body code {
-          font-size: 10px;
-          padding: 1px 3px;
+        .conversation-item.active .conv-time {
+          color: #b45309;
+          opacity: 0.7;
         }
         .conv-preview .markdown-body pre,
         .conv-preview .markdown-body blockquote,

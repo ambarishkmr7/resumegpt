@@ -10,6 +10,7 @@ import AdminPage from "./pages/AdminPage.jsx";
 import CmsPage from "./pages/CmsPage.jsx";
 import BlogPage from "./pages/BlogPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
+import CareerPage from "./pages/CareerPage.jsx";
 import { SkeletonStyles } from "./components/Skeleton.jsx";
 
 function AuthSkeleton() {
@@ -65,6 +66,7 @@ export default function App() {
       <Route path="/editor/:id" element={<Protected><Editor /></Protected>} />
       <Route path="/admin" element={<AdminProtected><AdminPage /></AdminProtected>} />
       <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
+      <Route path="/career" element={<Protected><CareerPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

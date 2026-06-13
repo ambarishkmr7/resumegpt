@@ -1,5 +1,5 @@
 // Central API client. Reads the JWT from localStorage and attaches it.
-const BASE = import.meta.env.VITE_API_BASE || "";
+export const BASE = import.meta.env.VITE_API_BASE || "";
 
 function authHeaders() {
   const token = localStorage.getItem("token");

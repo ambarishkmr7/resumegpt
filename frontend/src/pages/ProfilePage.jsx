@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
-import { api } from "../api/client";
+import { api, BASE } from "../api/client";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
 import { SkeletonBlock, SkeletonLine, SkeletonCircle, SkeletonButton } from "../components/Skeleton.jsx";
@@ -158,7 +158,7 @@ export default function ProfilePage() {
         setRemotePref(pr.remote_preference || "");
         setPct(data.profile_completion || 0);
         if (data.profile_photo_key) {
-          setPhotoPreview(`/api/profile/photo?key=${data.profile_photo_key}`);
+          setPhotoPreview(`${BASE}/api/profile/photo?key=${data.profile_photo_key}`);
           setPhotoError(false);
         }
       })

@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import Topbar from "../components/Topbar.jsx";
 import { SkeletonBlock, SkeletonLine, SkeletonTableRow } from "../components/Skeleton.jsx";
 import Markdown from "../components/Markdown.jsx";
 
 function AdminSkeleton() {
   return (
-    <>
-      <Topbar />
-      <div className="container admin-container">
+    <div className="container admin-container">
         <SkeletonBlock width={220} height={36} borderRadius={6} style={{ marginBottom: 24 }} />
         <div className="stat-grid">
           {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -33,7 +30,6 @@ function AdminSkeleton() {
           </tbody>
         </table>
       </div>
-    </>
   );
 }
 
@@ -99,22 +95,17 @@ export default function AdminPage() {
   if (loading) return <AdminSkeleton />;
   if (error && !stats) {
     return (
-      <>
-        <Topbar />
-        <div className="container">
-          <div className="error">{error}</div>
-          {error.includes("Admin access required") && (
-            <p>You need admin privileges to access this page. Contact an administrator.</p>
-          )}
-        </div>
-      </>
+      <div className="container">
+        <div className="error">{error}</div>
+        {error.includes("Admin access required") && (
+          <p>You need admin privileges to access this page. Contact an administrator.</p>
+        )}
+      </div>
     );
   }
 
   return (
-    <>
-      <Topbar />
-      <div className="container admin-container">
+    <div className="container admin-container">
         <h1>🛡️ Admin Panel</h1>
 
         {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
@@ -341,6 +332,5 @@ export default function AdminPage() {
           </div>
         )}
       </div>
-    </>
   );
 }
