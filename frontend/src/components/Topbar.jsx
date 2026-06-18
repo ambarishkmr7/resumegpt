@@ -29,6 +29,7 @@ export default function Topbar() {
     navigate("/profile");
   };
 
+  const isGuest = user?.email?.endsWith("@guest.resumesgpt.in");
   const initials = user
     ? (user.full_name || user.email || "?").charAt(0).toUpperCase()
     : "?";
@@ -42,13 +43,43 @@ export default function Topbar() {
   return (
     <nav className="topbar">
       <Link to="/" className="topbar-brand">
-        <img src="/logo.png" alt="ResumeGPT" className="topbar-logo" />
-        <span>ResumeGPT</span>
+        <img src="/logo.png" alt="resumesGPT" className="topbar-logo" />
+        <span>resumesGPT</span>
       </Link>
 
       <div className="spacer" />
 
-      {user && (
+      {!user && (
+        <Link
+          to="/login"
+          className="btn btn-primary btn-sm"
+          style={{ minHeight: "unset", minWidth: "unset", textDecoration: "none" }}
+        >
+          Login
+        </Link>
+      )}
+
+      {isGuest && (
+        <Link
+          to="/register"
+          className="btn btn-primary btn-sm"
+          style={{ minHeight: "unset", minWidth: "unset", textDecoration: "none", marginRight: 8 }}
+        >
+          💾 Save your work — Sign up free
+        </Link>
+      )}
+
+      {user && !isGuest && (
+        <Link
+          to="/jobs"
+          className="btn btn-ghost btn-sm"
+          style={{ minHeight: "unset", minWidth: "unset", textDecoration: "none", marginRight: 8 }}
+        >
+          💼 Find Jobs
+        </Link>
+      )}
+
+      {user && !isGuest && (
         <div className="topbar-profile" ref={dropdownRef}>
           <button
             className="topbar-profile-trigger"

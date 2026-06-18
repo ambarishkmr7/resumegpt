@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import AuthLayout from "../components/AuthLayout.jsx";
+import { resolvePendingAction } from "../utils/pendingAction.js";
 
 export default function Login() {
   const { login, googleLogin } = useAuth();
@@ -13,7 +14,7 @@ export default function Login() {
 
   const submit = async (e) => {
     e.preventDefault(); setError(""); setBusy(true);
-    try { await login(email, password); navigate("/"); }
+    try { await login(email, password); await resolvePendingAction(navigate); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -46,7 +47,7 @@ export default function Login() {
           window.google.accounts.id.initialize({
             client_id: clientId,
             callback: async (response) => {
-              try { await googleLogin(response.credential); navigate("/"); }
+              try { await googleLogin(response.credential); await resolvePendingAction(navigate); }
               catch (err) { setError(err.message); setBusy(false); }
             },
           });
@@ -59,6 +60,7 @@ export default function Login() {
   return (
     <AuthLayout>
       <h2>Welcome back</h2>
+      <h3>To avail Elite plan benefits you must logged in...</h3>
       <p className="sub">Sign in to keep building.</p>
       {error && <div className="error">{error}</div>}
 

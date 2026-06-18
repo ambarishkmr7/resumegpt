@@ -7,7 +7,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
 print("\n" + "="*60)
-print("ResumeGPT — Auth Debug Script")
+print("resumes-gpt — Auth Debug Script")
 print("="*60)
 
 # 1. Config
@@ -88,7 +88,7 @@ try:
     from app.core.security import hash_password, verify_password, create_access_token
 
     db: Session = SessionLocal()
-    TEST_EMAIL = "debug_test@resumegpt.in"
+    TEST_EMAIL = "debug_test@resumes-gpt.com"
     TEST_PASS  = "TestPass1234"
 
     # Clean up previous test

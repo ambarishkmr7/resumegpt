@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuth } from "../context/AuthContext.jsx";
 import Topbar from "../components/Topbar.jsx";
 import ResumeForm from "../components/ResumeForm.jsx";
 import ResumePreview from "../components/ResumePreview.jsx";
@@ -105,6 +106,7 @@ function EditorSkeleton() {
 export default function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [title, setTitle] = useState("");
   const [templateId, setTemplateId] = useState("classic");
@@ -117,6 +119,7 @@ export default function Editor() {
   const [improving, setImproving] = useState(false);
   const [showCover, setShowCover] = useState(false);
   const [showSub, setShowSub] = useState(false);
+  const [subStatus, setSubStatus] = useState(null);
   const [error, setError] = useState("");
 
   // Original-file preview
@@ -147,6 +150,8 @@ export default function Editor() {
         setContent(r.content); setTemplates(tpls);
       })
       .catch((e) => setError(e.message));
+
+    api.subscriptionStatus().then(setSubStatus).catch(() => {});
 
     api.fetchOriginal(id).then((result) => {
       if (result) {
@@ -248,6 +253,20 @@ export default function Editor() {
   if (!content) return <EditorSkeleton />;
 
   const activeTpl = templates.find((t) => t.id === templateId) || null;
+  const isEliteUnlocked = !!(subStatus?.is_subscribed && subStatus?.payment_id);
+
+  const openEliteTab = () => {
+    const isGuest = user?.email?.endsWith("@guest.resumesgpt.in");
+    if (!user || isGuest) {
+      navigate("/login");
+      return;
+    }
+    if (isEliteUnlocked) {
+      setRightTab("elite"); setMobileView("elite");
+    } else {
+      setShowSub(true);
+    }
+  };
   const isPdf = originalType.includes("pdf");
 
   return (
@@ -310,7 +329,7 @@ export default function Editor() {
           <button className={`editor-mobile-tab ${mobileView === "preview" ? "active" : ""}`} onClick={() => { setMobileView("preview"); setRightTab("preview"); }}>👁️ Preview</button>
           <button className={`editor-mobile-tab ${mobileView === "ats" ? "active" : ""}`} onClick={() => { setMobileView("ats"); setRightTab("ats"); }}>🎯 ATS</button>
           <button className={`editor-mobile-tab ${mobileView === "ai" ? "active" : ""}`} onClick={() => { setMobileView("ai"); setRightTab("ai"); }}>🤖 AI</button>
-          <button className={`editor-mobile-tab ${mobileView === "elite" ? "active" : ""}`} onClick={() => { setMobileView("elite"); setRightTab("elite"); }}>✨ Elite</button>
+          <button className={`editor-mobile-tab ${mobileView === "elite" ? "active" : ""}`} onClick={openEliteTab}>✨ Elite</button>
         </div>
 
         <div className="editor-layout">
@@ -360,7 +379,7 @@ export default function Editor() {
                 <button className={`rtab ${rightTab === "ai" ? "active" : ""}`}
                   onClick={() => { setRightTab("ai"); setMobileView("ai"); }}>AI Tools</button>
                 <button className={`rtab ${rightTab === "elite" ? "active" : ""}`}
-                  onClick={() => { setRightTab("elite"); setMobileView("elite"); }}>✨ Elite</button>
+                  onClick={openEliteTab}>✨ Elite</button>
               </div>
 
               {rightTab === "preview" && (
@@ -404,7 +423,20 @@ export default function Editor() {
             )}
 
             {rightTab === "elite" && (
-              <ElitePanel content={content} />
+              isEliteUnlocked
+                ? <ElitePanel content={content} />
+                : (
+                  <div style={{ padding: "40px 24px", textAlign: "center" }}>
+                    <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>
+                    <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Elite Plan Required</div>
+                    <div style={{ color: "var(--ink-soft)", marginBottom: 20, fontSize: 14 }}>
+                      Unlock AI Career Counseling, Mock Interviews, Job Agent, and more.
+                    </div>
+                    <button className="btn btn-primary" onClick={() => setShowSub(true)}>
+                      Upgrade to Elite — ₹1,999
+                    </button>
+                  </div>
+                )
             )}
             </div>
           </div>
@@ -413,7 +445,11 @@ export default function Editor() {
 
       {showCover && <CoverLetterModal content={content} onClose={() => setShowCover(false)} />}
       {showSub && <SubscriptionModal onClose={() => setShowSub(false)}
-        onSuccess={() => { setShowSub(false); setStatus("Subscription activated! You can now download."); }} />}
+        onSuccess={() => {
+          setShowSub(false);
+          setStatus("Subscription activated!");
+          api.subscriptionStatus().then(setSubStatus).catch(() => {});
+        }} />}
     </>
   );
 }

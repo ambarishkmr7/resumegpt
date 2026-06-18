@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # Database — MySQL (or SQLite for dev)
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
-    DB_NAME: str = "resumegpt_db"
+    DB_NAME: str = "resumes-gpt_db"
     DB_USER: str = "root"
     DB_PASSWORD: str = ""
     DATABASE_URL: str = ""  # auto-built from DB_* if empty

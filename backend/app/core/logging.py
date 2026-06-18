@@ -1,4 +1,4 @@
-"""Centralized logging configuration for the ResumeGPT backend.
+"""Centralized logging configuration for the resumes-gpt backend.
 
 Call ``setup_logging()`` once at application startup (from ``main.py``).
 Every other module simply does::

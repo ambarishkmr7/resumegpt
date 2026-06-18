@@ -4,6 +4,7 @@ import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
+import LandingPage from "./pages/LandingPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Editor from "./pages/Editor.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
@@ -11,6 +12,7 @@ import CmsPage from "./pages/CmsPage.jsx";
 import BlogPage from "./pages/BlogPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import CareerPage from "./pages/CareerPage.jsx";
+import JobsPage from "./pages/JobsPage.jsx";
 import { SkeletonStyles } from "./components/Skeleton.jsx";
 
 function AuthSkeleton() {
@@ -62,11 +64,13 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/page/:slug" element={<CmsPage />} />
       <Route path="/page/blog" element={<BlogPage />} />
-      <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="/editor/:id" element={<Protected><Editor /></Protected>} />
       <Route path="/admin" element={<AdminProtected><AdminPage /></AdminProtected>} />
       <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
       <Route path="/career" element={<Protected><CareerPage /></Protected>} />
+      <Route path="/jobs" element={<Protected><JobsPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

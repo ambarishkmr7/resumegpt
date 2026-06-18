@@ -28,7 +28,7 @@ export default function SubscriptionModal({ onClose, onSuccess }) {
         key: order.razorpay_key_id,
         amount: order.amount,
         currency: "INR",
-        name: "ResumeGPT",
+        name: "resumesGPT",
         description: "Elite Plan — Lifetime Access",
         image: "/logo.png",
         order_id: order.order_id,
@@ -57,8 +57,8 @@ export default function SubscriptionModal({ onClose, onSuccess }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal sub-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
-        <img src="/logo.png" alt="ResumeGPT" style={{ height: 48, margin: "0 auto 10px", display: "block" }} />
-        <h2 style={{ textAlign: "center", marginTop: 0 }}>Unlock ResumeGPT Elite</h2>
+        <img src="/logo.png" alt="resumesGPT" style={{ height: 48, margin: "0 auto 10px", display: "block" }} />
+        <h2 style={{ textAlign: "center", marginTop: 0 }}>Unlock resumesGPT Elite</h2>
         <p className="sub-desc">One-time payment of ₹1,999. Lifetime access. No recurring charges.</p>
 
         <div className="elite-checkout-card">

@@ -70,6 +70,23 @@ export const api = {
       body: JSON.stringify({ token, new_password }),
     }).then(handle),
 
+  guestRegister: () =>
+    fetch(`${BASE}/api/auth/guest`, { method: "POST" }).then(handle),
+
+  claimGuest: (full_name, email, password) =>
+    fetch(`${BASE}/api/auth/claim-guest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ full_name, email, password }),
+    }).then(handle),
+
+  changePassword: (current_password, new_password) =>
+    fetch(`${BASE}/api/auth/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ current_password, new_password }),
+    }).then(handle),
+
   me: () => fetch(`${BASE}/api/auth/me`, { headers: authHeaders() }).then(handle),
 
   // ---- Templates ----
@@ -180,6 +197,13 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ content, target_role, location }),
+    }).then(handle),
+
+  jobListings: (content, target_role, location, skills) =>
+    fetch(`${BASE}/api/resumes/job-listings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ content, target_role, location, skills }),
     }).then(handle),
 
   uploadPhoto: async (file) => {

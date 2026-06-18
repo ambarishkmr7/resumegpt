@@ -1,5 +1,6 @@
 import logging
 import secrets
+import uuid as _uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +17,7 @@ from app.core.security import (
 from app.database import get_db
 from app.models import User
 from app.schemas import (
+    ChangePassword,
     ForgotPassword,
     ResetPassword,
     Token,
@@ -115,6 +117,60 @@ def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
     user.reset_token_expires = None
     db.commit()
     return {"detail": "Password updated successfully"}
+
+
+@router.post("/guest", response_model=Token, status_code=201)
+def guest_register(db: Session = Depends(get_db)):
+    """Create a temporary guest account for anonymous resume building.
+    The guest can later claim the account by registering with a real email."""
+    guest_uid = _uuid.uuid4().hex[:16]
+    email = f"guest_{guest_uid}@guest.resumesgpt.in"
+    user = User(
+        email=email,
+        full_name="Guest",
+        hashed_password=hash_password(_uuid.uuid4().hex),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(str(user.id))
+    logger.info("Guest user created: %s", email)
+    return Token(access_token=token, user=UserOut.model_validate(user))
+
+
+@router.post("/claim-guest", response_model=Token)
+def claim_guest(
+    payload: UserCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upgrade a guest account to a real account. Preserves all resumes."""
+    if not user.email.endswith("@guest.resumesgpt.in"):
+        raise HTTPException(status_code=400, detail="Account is not a guest account")
+    if db.query(User).filter(User.email == payload.email, User.id != user.id).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user.email = payload.email
+    user.full_name = payload.full_name or user.full_name
+    user.hashed_password = hash_password(payload.password)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(str(user.id))
+    logger.info("Guest account claimed: %s -> %s", f"guest_*@guest.resumesgpt.in", payload.email)
+    return Token(access_token=token, user=UserOut.model_validate(user))
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePassword,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+    logger.info("Password changed for user: %s", user.email)
+    return {"detail": "Password changed successfully"}
 
 
 @router.get("/me", response_model=UserOut)

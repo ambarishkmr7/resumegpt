@@ -29,4 +29,4 @@ Disallow: /
 User-agent: SemrushBot
 Disallow: /
 
-Sitemap: https://www.resumegpt.in/sitemap.xml
+Sitemap: https://www.resumes-gpt.com/sitemap.xml

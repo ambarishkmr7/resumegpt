@@ -2,12 +2,15 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import AuthLayout from "../components/AuthLayout.jsx";
+import { resolvePendingAction } from "../utils/pendingAction.js";
+import { api } from "../api/client.js";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 export default function Register() {
-  const { register, googleLogin } = useAuth();
+  const { register, googleLogin, loginWithToken, user } = useAuth();
   const navigate = useNavigate();
+  const isGuest = user?.email?.endsWith("@guest.resumesgpt.in");
   const [form, setForm] = useState({ full_name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,7 +22,17 @@ export default function Register() {
     e.preventDefault(); setError("");
     if (form.password.length < 8) return setError("Password must be at least 8 characters.");
     setBusy(true);
-    try { await register(form); navigate("/"); }
+    try {
+      if (isGuest) {
+        // Upgrade guest account in-place — all existing resumes are preserved
+        const data = await api.claimGuest(form.full_name, form.email, form.password);
+        loginWithToken(data);
+        navigate("/dashboard");
+      } else {
+        await register(form);
+        await resolvePendingAction(navigate);
+      }
+    }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -34,7 +47,7 @@ export default function Register() {
         client_id: GOOGLE_CLIENT_ID,
         callback: async (response) => {
           setBusy(true); setError("");
-          try { await googleLogin(response.credential); navigate("/"); }
+          try { await googleLogin(response.credential); await resolvePendingAction(navigate); }
           catch (err) { setError(err.message); }
           finally { setBusy(false); }
         },
@@ -59,8 +72,13 @@ export default function Register() {
 
   return (
     <AuthLayout>
-      <h2>Create your account</h2>
-      <p className="sub">Free to start. No card required.</p>
+      <h2>{isGuest ? "Save your resume" : "Create your account"}</h2>
+      <p className="sub">{isGuest ? "Create a free account to save your resume permanently." : "Free to start. No card required."}</p>
+      {isGuest && (
+        <div className="notice" style={{ marginBottom: 14, fontSize: 13 }}>
+          ✅ Your resume will be saved to your new account — nothing will be lost.
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
 
       {GOOGLE_CLIENT_ID ? (

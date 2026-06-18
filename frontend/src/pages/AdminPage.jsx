@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { SkeletonBlock, SkeletonLine, SkeletonTableRow } from "../components/Skeleton.jsx";
 import Markdown from "../components/Markdown.jsx";
 
@@ -34,6 +36,9 @@ function AdminSkeleton() {
 }
 
 export default function AdminPage() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
   const [stats, setStats] = useState(null);
   const [pages, setPages] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -47,6 +52,55 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState("overview");
+
+  // Change password state
+  const [cpCurrent, setCpCurrent] = useState("");
+  const [cpNew, setCpNew] = useState("");
+  const [cpConfirm, setCpConfirm] = useState("");
+  const [cpLoading, setCpLoading] = useState(false);
+  const [cpMsg, setCpMsg] = useState({ type: "", text: "" });
+
+  // Forgot password state
+  const [fpLoading, setFpLoading] = useState(false);
+  const [fpMsg, setFpMsg] = useState({ type: "", text: "" });
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (cpNew !== cpConfirm) {
+      setCpMsg({ type: "error", text: "New passwords do not match" });
+      return;
+    }
+    setCpLoading(true);
+    setCpMsg({ type: "", text: "" });
+    try {
+      await api.changePassword(cpCurrent, cpNew);
+      setCpMsg({ type: "success", text: "Password changed successfully" });
+      setCpCurrent(""); setCpNew(""); setCpConfirm("");
+    } catch (e) {
+      setCpMsg({ type: "error", text: e.message });
+    } finally {
+      setCpLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!user?.email) return;
+    setFpLoading(true);
+    setFpMsg({ type: "", text: "" });
+    try {
+      await api.forgotPassword(user.email);
+      setFpMsg({ type: "success", text: `Reset link sent to ${user.email}` });
+    } catch (e) {
+      setFpMsg({ type: "error", text: e.message });
+    } finally {
+      setFpLoading(false);
+    }
+  };
 
   const isContentDirty = editContent !== originalContent || editTitle !== originalTitle;
 
@@ -106,7 +160,10 @@ export default function AdminPage() {
 
   return (
     <div className="container admin-container">
-        <h1>🛡️ Admin Panel</h1>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <h1>🛡️ Admin Panel</h1>
+          <button className="btn btn-ghost" onClick={handleLogout}>Logout</button>
+        </div>
 
         {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
 
@@ -115,6 +172,7 @@ export default function AdminPage() {
           <button className={`rtab ${section === "users" ? "active" : ""}`} onClick={() => setSection("users")}>👥 Users</button>
           <button className={`rtab ${section === "payments" ? "active" : ""}`} onClick={() => setSection("payments")}>💳 Payments</button>
           <button className={`rtab ${section === "cms" ? "active" : ""}`} onClick={() => { setSection("cms"); setEditSlug(null); }}>📝 CMS Pages</button>
+          <button className={`rtab ${section === "account" ? "active" : ""}`} onClick={() => setSection("account")}>⚙️ Account</button>
         </div>
 
         {/* ==================== OVERVIEW ==================== */}
@@ -272,6 +330,79 @@ export default function AdminPage() {
                 </tbody>
               </table>
             )}
+          </div>
+        )}
+
+        {/* ==================== ACCOUNT ==================== */}
+        {section === "account" && (
+          <div className="admin-account" style={{ maxWidth: 480 }}>
+            <h3>Change Password</h3>
+            <form onSubmit={handleChangePassword}>
+              <div className="field">
+                <label htmlFor="cp-current">Current Password</label>
+                <input
+                  id="cp-current"
+                  type="password"
+                  value={cpCurrent}
+                  onChange={(e) => setCpCurrent(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="cp-new">New Password</label>
+                <input
+                  id="cp-new"
+                  type="password"
+                  value={cpNew}
+                  onChange={(e) => setCpNew(e.target.value)}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="cp-confirm">Confirm New Password</label>
+                <input
+                  id="cp-confirm"
+                  type="password"
+                  value={cpConfirm}
+                  onChange={(e) => setCpConfirm(e.target.value)}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+              {cpMsg.text && (
+                <div className={cpMsg.type === "error" ? "error" : "success"} style={{ marginBottom: 8 }}>
+                  {cpMsg.text}
+                </div>
+              )}
+              <button className="btn btn-primary" type="submit" disabled={cpLoading || !cpCurrent || !cpNew || !cpConfirm}>
+                {cpLoading ? "Saving…" : "Change Password"}
+              </button>
+            </form>
+
+            <hr style={{ margin: "28px 0", borderColor: "var(--border)" }} />
+
+            <h3>Forgot Password</h3>
+            <p style={{ color: "var(--ink-soft)", marginBottom: 12 }}>
+              Send a password reset link to <strong>{user?.email}</strong>.
+            </p>
+            {fpMsg.text && (
+              <div className={fpMsg.type === "error" ? "error" : "success"} style={{ marginBottom: 8 }}>
+                {fpMsg.text}
+              </div>
+            )}
+            <button className="btn btn-ghost" onClick={handleForgotPassword} disabled={fpLoading}>
+              {fpLoading ? "Sending…" : "Send Reset Link"}
+            </button>
+
+            <hr style={{ margin: "28px 0", borderColor: "var(--border)" }} />
+
+            <h3>Logout</h3>
+            <p style={{ color: "var(--ink-soft)", marginBottom: 12 }}>Sign out of the admin panel.</p>
+            <button className="btn btn-ghost" onClick={handleLogout}>Logout</button>
           </div>
         )}
 

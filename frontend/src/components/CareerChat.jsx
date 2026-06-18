@@ -1,4 +1,4 @@
-// resumegpt/frontend/src/components/CareerChat.jsx
+// resumes-gpt/frontend/src/components/CareerChat.jsx
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../api/client.js";

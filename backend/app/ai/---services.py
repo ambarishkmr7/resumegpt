@@ -895,7 +895,7 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"**{primary_skill} deep dive (1 week):**\n"
             f"• Internals, performance, best practices\n"
             f"• Prepare 3 project walkthroughs with metrics\n\n"
-            f"**Mock interviews:** Use ResumeGPT Mock Interview, Pramp.com (free), interviewing.io")
+            f"**Mock interviews:** Use resumes-gpt Mock Interview, Pramp.com (free), interviewing.io")
         return {"response": r, "suggestions": _gen_smart_suggestions(q, covered | {"interview_tech"}, title, skills, exp_years)}
 
     # BEHAVIORAL INTERVIEW
@@ -960,7 +960,7 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"• Naukri: Update profile weekly (bumps visibility)\n"
             f"• **Referrals are 5x more effective** — message 2nd-degree connections\n"
             f"• Apply within 48 hours of a posting (early applicants get 3x more callbacks)\n"
-            f"• Customize your resume per application using ResumeGPT AI Rewrite\n\n"
+            f"• Customize your resume per application using resumes-gpt AI Rewrite\n\n"
             f"**Track everything:** Spreadsheet with company, role, date applied, status, follow-up date")
         return {"response": r, "suggestions": _gen_smart_suggestions(q, covered | {"companies"}, title, skills, exp_years)}
 
@@ -974,10 +974,10 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"**Quick wins (do today):**\n"
             f"• Add numbers to at least 60% of bullets (currently {m_pct}%)\n"
             f"• Replace weak verbs ('responsible for', 'worked on') → power verbs ('led', 'built', 'reduced')\n"
-            f"• Use ResumeGPT AI Improve for instant enhancement\n\n"
+            f"• Use resumes-gpt AI Improve for instant enhancement\n\n"
             f"**LinkedIn optimization:**\n"
             f"• Headline: '{title} | {skills[0] if skills else 'Tech'} | Open to opportunities'\n"
-            f"• About: Use ResumeGPT Professional Writeup generator\n"
+            f"• About: Use resumes-gpt Professional Writeup generator\n"
             f"• Post 1-2x/week about your work — even short insights get engagement")
         return {"response": r, "suggestions": _gen_smart_suggestions(q, covered | {"resume"}, title, skills, exp_years)}
 
@@ -1067,7 +1067,7 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"• Update LinkedIn immediately — '#OpenToWork' gets 40% more recruiter views\n"
             f"• Tell your network — people WANT to help. Post: 'I'm exploring new opportunities as a {title}'\n\n"
             f"**Week 2-3: Prepare**\n"
-            f"• Use ResumeGPT to refresh your resume with latest achievements\n"
+            f"• Use resumes-gpt to refresh your resume with latest achievements\n"
             f"• Prepare 5 STAR stories and practice interviews\n\n"
             f"**Week 4+: Execute**\n"
             f"• Apply to 10-15 roles/week (quality > quantity)\n"

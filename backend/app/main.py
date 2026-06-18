@@ -65,7 +65,7 @@ def _seed_admin():
 async def lifespan(app: FastAPI):
     # Startup
     setup_logging(settings.LOG_LEVEL)
-    logger.info("ResumeGPT API starting up — log level: %s", settings.LOG_LEVEL)
+    logger.info("resumes-gpt API starting up — log level: %s", settings.LOG_LEVEL)
 
     try:
         Base.metadata.create_all(bind=engine)
@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
     logger.info("Startup complete — all routers mounted")
     yield
     # Shutdown
-    logger.info("ResumeGPT API shutting down")
+    logger.info("resumes-gpt API shutting down")
 
 
 # ── Security headers middleware ────────────────────────────────────────────────
@@ -105,7 +105,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app = FastAPI(title="ResumeGPT API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="resumes-gpt API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -58,7 +58,9 @@ class CheckoutRequest(BaseModel):
 @router.get("/status", response_model=SubscriptionStatus)
 def get_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     sub = db.query(Subscription).filter(
-        Subscription.user_id == user.id, Subscription.status == "active"
+        Subscription.user_id == user.id,
+        Subscription.status == "active",
+        Subscription.payment_id != None,
     ).first()
     if sub:
         return SubscriptionStatus(

@@ -25,6 +25,7 @@ from app.schemas import (
     RewriteRequest, RewriteResponse, RewriteVariant,
     SubscriptionStatus,
     CareerJobsRequest, CareerJobsResponse,
+    JobListingsRequest, JobListingsResponse, JobListing,
     GenerateSampleRequest,
 )
 
@@ -327,6 +328,24 @@ def rewrite(payload: RewriteRequest, user: User = Depends(get_current_user)):
 def search_jobs(payload: CareerJobsRequest, user: User = Depends(get_current_user)):
     result = ai_services.suggest_jobs(payload.content, payload.target_role, payload.location)
     return CareerJobsResponse(**result)
+
+
+@router.post("/job-listings", response_model=JobListingsResponse)
+def job_listings(payload: JobListingsRequest, user: User = Depends(get_current_user)):
+    content = payload.content
+    result = ai_services.suggest_job_listings(
+        content, payload.target_role, payload.location, payload.skills
+    )
+    listings = [JobListing(**item) for item in result.get("listings", [])]
+    return JobListingsResponse(
+        listings=listings,
+        linkedin_job_url=result.get("linkedin_job_url", ""),
+        naukri_job_url=result.get("naukri_job_url", ""),
+        indeed_job_url=result.get("indeed_job_url", ""),
+        monster_url=result.get("monster_url", ""),
+        shine_url=result.get("shine_url", ""),
+        remote_jobs_url=result.get("remote_jobs_url", ""),
+    )
 
 
 @router.post("/trending-jobs")

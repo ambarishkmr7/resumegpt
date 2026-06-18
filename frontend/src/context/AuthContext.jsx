@@ -62,6 +62,7 @@ export function AuthProvider({ children }) {
   const register = async (body) => persist(await api.register(body));
   const googleLogin = async (credential) => persist(await api.googleLogin(credential));
   const facebookLogin = async (accessToken) => persist(await api.facebookLogin(accessToken));
+  const loginWithToken = (data) => persist(data);
 
   const logout = useCallback(async () => {
     try { await api.logout(); } catch (_) {}
@@ -74,7 +75,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, loading, login, register, googleLogin, facebookLogin, logout,
-      profilePhoto, refreshProfilePhoto,
+      loginWithToken, profilePhoto, refreshProfilePhoto,
     }}>
       {children}
     </AuthContext.Provider>
