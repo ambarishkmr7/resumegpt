@@ -29,25 +29,56 @@ tailored cover letter, and download as **PDF** or **DOCX**.
 
 ## Quick start
 
-### 1. Backend
+### 1. One-time setup
 
+**Backend dependencies (Python):**
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate   # optional
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env          # edit SECRET_KEY; ANTHROPIC_API_KEY is optional
-uvicorn app.main:app --reload # serves http://localhost:8000
+copy .env.example .env
+cd ..
 ```
+> Edit `backend\.env` — set `SECRET_KEY` at minimum. `ANTHROPIC_API_KEY` is optional.
+
+**Frontend + root dependencies (Node):**
+```bash
+npm run install:all
+copy frontend\.env.example frontend\.env
+```
+
+### 2. Start (development)
+
+```bash
+npm run dev
+```
+
+Starts both servers in a single terminal with color-coded logs:
+- Backend → `http://localhost:8000` (cyan)
+- Frontend → `http://localhost:5173` (magenta)
+
+Press `Ctrl+C` to stop both.
 
 API docs auto-generated at `http://localhost:8000/docs`.
 
-### 2. Frontend
+### 3. Start (production)
 
 ```bash
-cd frontend
-npm install
-cp .env.example .env          # VITE_API_BASE can stay empty in dev (Vite proxies /api)
-npm run dev                   # serves http://localhost:5173
+npm run prod
+```
+
+Builds the frontend into `frontend/dist/`, then starts the backend with 4 workers (no hot-reload). Serve `frontend/dist/` via nginx, Caddy, or a static host (Vercel, Netlify, etc.).
+
+---
+
+### Running backend or frontend individually
+
+```bash
+npm run dev:backend   # backend only — http://localhost:8000
+npm run dev:frontend  # frontend only — http://localhost:5173
+npm run build         # build frontend only
+npm run start         # start backend in production mode only
 ```
 
 Open `http://localhost:5173`, register an account, and start building.

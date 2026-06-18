@@ -11,7 +11,7 @@ For Cloudflare R2 set in ``.env``::
     S3_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
     S3_ACCESS_KEY_ID=<r2-access-key>
     S3_SECRET_ACCESS_KEY=<r2-secret-key>
-    S3_BUCKET_NAME=resumegpt
+    S3_BUCKET_NAME=resumes-gpt
     S3_REGION=auto
 
 For AWS S3 later, just change the endpoint and region::
@@ -74,7 +74,7 @@ class StorageService:
 
     def __init__(self, settings) -> None:
         self._backend: str = getattr(settings, "STORAGE_BACKEND", "local").lower()
-        self._s3_bucket: str = getattr(settings, "S3_BUCKET_NAME", "resumegpt")
+        self._s3_bucket: str = getattr(settings, "S3_BUCKET_NAME", "resumes-gpt")
 
         if self._backend == "s3":
             self._s3 = _build_s3_client(

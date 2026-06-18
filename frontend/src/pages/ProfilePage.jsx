@@ -133,30 +133,89 @@ export default function ProfilePage() {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoError, setPhotoError] = useState(false);
   const photoRef = useRef();
+  const [latestResumeContent, setLatestResumeContent] = useState(null);
+  const [resumeFilledMsg, setResumeFilledMsg] = useState("");
+  const [autoFilledFromResume, setAutoFilledFromResume] = useState(false);
+
+  const mapResumeEdu = (edu) => edu.map((e) => ({
+    degree: e.degree || "",
+    school: e.school || "",
+    location: e.location || "",
+    start_year: e.start || "",
+    end_year: e.end || "",
+    grade: e.details || "",
+  }));
+
+  const mapResumeExp = (exp) => exp.map((e) => {
+    const isPresent = !e.end || e.end.toLowerCase() === "present";
+    return {
+      title: e.title || "",
+      company: e.company || "",
+      location: e.location || "",
+      start_date: e.start || "",
+      end_date: isPresent ? "" : (e.end || ""),
+      current: isPresent,
+      description: (e.bullets || []).join("\n"),
+    };
+  });
 
   const load = useCallback(() => {
     setLoading(true);
-    api.getProfile()
-      .then((data) => {
+    Promise.allSettled([api.getProfile(), api.listResumes()])
+      .then(([profileResult, resumesResult]) => {
+        const data = profileResult.status === "fulfilled" ? profileResult.value : {};
+        const resumes = resumesResult.status === "fulfilled" ? resumesResult.value : [];
+
+        // Pick the most recent resume by updated_at
+        const latest = resumes.length > 0
+          ? resumes.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0]
+          : null;
+        const rc = latest?.content || null;
+        const c = rc?.contact || {};
+        if (rc) setLatestResumeContent(rc);
+
+        // Merge: profile data takes priority; resume fills empty fields
         const p = data.personal || {};
-        setFullName(p.full_name || "");
+        let autoFilled = false;
+        const fill = (profileVal, resumeVal, setter) => {
+          if (profileVal) { setter(profileVal); }
+          else if (resumeVal) { setter(resumeVal); autoFilled = true; }
+        };
+
+        fill(p.full_name, c.name, setFullName);
         setEmail(p.email || "");
-        setPhone(p.phone || "");
-        setLocation(p.location || "");
-        setLinkedinUrl(p.linkedin_url || "");
-        setHeadline(p.headline || "");
-        setSummary(p.summary || "");
-        setEducation(data.education || []);
-        setExperience(data.experience || []);
-        setSkills(data.skills || []);
+        fill(p.phone, c.phone, setPhone);
+        fill(p.location, c.location, setLocation);
+        fill(p.linkedin_url, c.linkedin, setLinkedinUrl);
+        fill(p.headline, c.title, setHeadline);
+        fill(p.summary, rc?.summary, setSummary);
+
+        const profileEdu = data.education || [];
+        const resumeEdu = mapResumeEdu(rc?.education || []);
+        if (profileEdu.length > 0) { setEducation(profileEdu); }
+        else if (resumeEdu.length > 0) { setEducation(resumeEdu); autoFilled = true; }
+
+        const profileExp = data.experience || [];
+        const resumeExp = mapResumeExp(rc?.experience || []);
+        if (profileExp.length > 0) { setExperience(profileExp); }
+        else if (resumeExp.length > 0) { setExperience(resumeExp); autoFilled = true; }
+
+        const profileSkills = data.skills || [];
+        const resumeSkills = rc?.skills || [];
+        if (profileSkills.length > 0) { setSkills(profileSkills); }
+        else if (resumeSkills.length > 0) { setSkills(resumeSkills); autoFilled = true; }
+
+        if (autoFilled) setAutoFilledFromResume(true);
+
         const pr = data.preferences || {};
-        setDesiredRole(pr.desired_role || "");
+        setDesiredRole(pr.desired_role || c.title || "");
         setPrefLocations(pr.preferred_locations || []);
         setSalaryMin(pr.expected_salary_min || "");
         setSalaryMax(pr.expected_salary_max || "");
         setJobType(pr.job_type || "");
         setRemotePref(pr.remote_preference || "");
         setPct(data.profile_completion || 0);
+
         if (data.profile_photo_key) {
           setPhotoPreview(`${BASE}/api/profile/photo?key=${data.profile_photo_key}`);
           setPhotoError(false);
@@ -165,6 +224,34 @@ export default function ProfilePage() {
       .catch((e) => console.error("Failed to load profile:", e))
       .finally(() => setLoading(false));
   }, []);
+
+  const fillFromResume = useCallback(() => {
+    if (!latestResumeContent) return;
+    const rc = latestResumeContent;
+    const c = rc.contact || {};
+    let filled = 0;
+    const bump = () => { filled++; };
+
+    if (!fullName && c.name) { setFullName(c.name); bump(); }
+    if (!phone && c.phone) { setPhone(c.phone); bump(); }
+    if (!location && c.location) { setLocation(c.location); bump(); }
+    if (!linkedinUrl && c.linkedin) { setLinkedinUrl(c.linkedin); bump(); }
+    if (!headline && c.title) { setHeadline(c.title); bump(); }
+    if (!summary && rc.summary) { setSummary(rc.summary); bump(); }
+    if (education.length === 0 && rc.education?.length > 0) {
+      setEducation(mapResumeEdu(rc.education)); bump();
+    }
+    if (experience.length === 0 && rc.experience?.length > 0) {
+      setExperience(mapResumeExp(rc.experience)); bump();
+    }
+    if (skills.length === 0 && rc.skills?.length > 0) {
+      setSkills(rc.skills); bump();
+    }
+    if (!desiredRole && c.title) { setDesiredRole(c.title); bump(); }
+
+    setResumeFilledMsg(filled > 0 ? `✅ Filled ${filled} field(s) from your resume.` : "ℹ️ No new fields to fill — profile already complete.");
+    setTimeout(() => setResumeFilledMsg(""), 4000);
+  }, [latestResumeContent, fullName, phone, location, linkedinUrl, headline, summary, education, experience, skills, desiredRole]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -278,6 +365,16 @@ export default function ProfilePage() {
     <>
       <Topbar />
       <div className="container" style={{ maxWidth: 820 }}>
+        {/* ── Back button + Resume sync ── */}
+        <div style={{ marginBottom: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>← Back</button>
+          {latestResumeContent && (
+            <button className="btn btn-ghost btn-sm" onClick={fillFromResume} title="Fill empty fields from your latest uploaded resume">
+              📄 Fill from Resume
+            </button>
+          )}
+          {resumeFilledMsg && <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>{resumeFilledMsg}</span>}
+        </div>
         {/* ── Header + Completion ── */}
         <div className="profile-header">
           <div>
@@ -318,6 +415,11 @@ export default function ProfilePage() {
           />
         </div>
 
+        {autoFilledFromResume && (
+          <div className="notice" style={{ marginBottom: 20, background: "#f0f4ff", color: "#3b5bdb", borderColor: "#c5d0f5" }}>
+            📄 Empty fields were pre-filled from your latest resume. Review the details below and click <strong>Save Profile</strong> to confirm.
+          </div>
+        )}
         {pct < 100 && (
           <div className="notice" style={{ marginBottom: 20 }}>
             💡 Your profile is <strong>{pct}% complete</strong>. Fill in all sections to unlock personalized job recommendations and career insights.

@@ -19,7 +19,7 @@ That's the only new dependency needed.
 ## Step 2 — Create a Firebase Project
 
 1. Go to https://console.firebase.google.com
-2. Click **"Add project"** → give it a name (e.g. `resumegpt`) → Continue
+2. Click **"Add project"** → give it a name (e.g. `resumes-gpt`) → Continue
 3. Disable Google Analytics if you don't need it → **Create project**
 
 ---
@@ -27,15 +27,15 @@ That's the only new dependency needed.
 ## Step 3 — Register a Web App
 
 1. In your Firebase project, click the **`</>`** (Web) icon
-2. Enter an app nickname (e.g. `resumegpt-web`) → **Register app**
+2. Enter an app nickname (e.g. `resumes-gpt-web`) → **Register app**
 3. You'll see a `firebaseConfig` object like:
 
 ```js
 const firebaseConfig = {
   apiKey: "AIzaSy...",
-  authDomain: "resumegpt-xxxxx.firebaseapp.com",
-  projectId: "resumegpt-xxxxx",
-  storageBucket: "resumegpt-xxxxx.appspot.com",
+  authDomain: "resumes-gpt-xxxxx.firebaseapp.com",
+  projectId: "resumes-gpt-xxxxx",
+  storageBucket: "resumes-gpt-xxxxx.appspot.com",
   messagingSenderId: "123456789012",
   appId: "1:123456789012:web:abcdef123456"
 };
@@ -58,7 +58,7 @@ Copy these values — you'll need them in Step 5.
 
 1. Still in **Authentication** → **Settings** tab → **Authorised domains**
 2. Your `localhost` is already there for dev
-3. When you deploy, add your production domain (e.g. `resumegpt.yourdomain.com`)
+3. When you deploy, add your production domain (e.g. `resumes-gpt.yourdomain.com`)
 
 ---
 

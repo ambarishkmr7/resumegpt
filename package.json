@@ -1,0 +1,17 @@
+{
+  "name": "resumes-gpt",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names \"backend,frontend\" --prefix-colors \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && call .venv\\Scripts\\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "cd backend && call .venv\\Scripts\\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4",
+    "prod": "npm run build && npm run start",
+    "install:all": "npm install && npm --prefix frontend install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

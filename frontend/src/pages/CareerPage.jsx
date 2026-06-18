@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import CareerChat from "../components/CareerChat.jsx";
 import Topbar from "../components/Topbar.jsx";
@@ -40,6 +41,7 @@ function ConversationSkeleton() {
 
 export default function CareerPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [conversations, setConversations] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -143,6 +145,13 @@ export default function CareerPage() {
             title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
           >
             {sidebarOpen ? "◀" : "▶"}
+          </button>
+          <button
+            className="back-btn"
+            onClick={() => navigate(-1)}
+            title="Go back"
+          >
+            ← Back
           </button>
           <CareerChat
             threadId={activeThreadId}
@@ -318,6 +327,25 @@ export default function CareerPage() {
         }
         .sidebar-toggle:hover { background: #f3f0e9; }
 
+        /* ── Back button ── */
+        .back-btn {
+          position: absolute;
+          top: 16px;
+          right: 16px;
+          z-index: 5;
+          background: #fff;
+          color: #1c1a17;
+          border: 1px solid #e2dccf;
+          border-radius: 6px;
+          padding: 6px 12px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 500;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+          transition: all 0.2s;
+        }
+        .back-btn:hover { background: #f3f0e9; }
+
         /* ── Mobile overlay (behind sidebar, closes on tap) ── */
         .career-sidebar-overlay {
           display: none;
@@ -385,6 +413,7 @@ export default function CareerPage() {
         @media (max-width: 480px) {
           .career-sidebar { width: 85vw; }
           .sidebar-toggle { top: 10px; left: 10px; padding: 8px 12px; font-size: 14px; }
+          .back-btn { top: 10px; right: 10px; padding: 8px 12px; font-size: 14px; }
         }
       `}</style>
     </div>

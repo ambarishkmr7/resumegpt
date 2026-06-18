@@ -77,7 +77,7 @@ export default function BlogPage() {
       <section className="blog-hero" style={{ background: "linear-gradient(135deg,#1a1a1a,#2d1810)", color: "#fff", padding: "48px 24px", textAlign: "center" }}>
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
           <p style={{ fontSize: 13, fontWeight: 700, letterSpacing: 2, color: "#f59e0b", textTransform: "uppercase", marginBottom: 12 }}>
-            ResumeGPT Blog
+            resumesGPT Blog
           </p>
           <h1 style={{ fontSize: 34, fontWeight: 800, margin: "0 0 14px", lineHeight: 1.25 }}>
             Career Advice, Resume Tips &amp; Job Search Guides for India 2026
@@ -135,7 +135,7 @@ export default function BlogPage() {
         }}>
           <h2 style={{ fontSize: 24, margin: "0 0 10px" }}>Ready to Build Your ATS-Optimized Resume?</h2>
           <p style={{ color: "rgba(255,255,255,0.8)", marginBottom: 20 }}>
-            Join thousands of Indian professionals who've landed interviews at top companies using ResumeGPT.
+            Join thousands of Indian professionals who've landed interviews at top companies using resumesGPT.
           </p>
           <Link to="/register" style={{
             display: "inline-block", background: "#d97706", color: "#fff",

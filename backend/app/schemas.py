@@ -149,6 +149,11 @@ class ResetPassword(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 # ---------- Resume API ----------
 
 class ResumeCreate(BaseModel):
@@ -338,6 +343,39 @@ class CareerJobsResponse(BaseModel):
     linkedin_job_url: str = ""
     naukri_job_url: str = ""
     indeed_job_url: str = ""
+    remote_jobs_url: str = ""
+
+
+# ---------- Rich job listings (for /job-listings endpoint) ----------
+
+class JobListing(BaseModel):
+    job_title: str = ""
+    company: str = ""
+    location: str = ""
+    job_type: str = ""          # Full-time / Remote / Hybrid / Contract
+    experience_required: str = ""
+    skills_required: List[str] = Field(default_factory=list)
+    description: str = ""
+    salary_range: str = ""
+    source: str = ""            # LinkedIn / Naukri / Indeed / Monster / Shine
+    posted_days_ago: int = 1
+    apply_url: str = ""
+
+
+class JobListingsRequest(BaseModel):
+    content: Optional[ResumeContent] = None
+    target_role: Optional[str] = None
+    location: Optional[str] = None
+    skills: Optional[List[str]] = None
+
+
+class JobListingsResponse(BaseModel):
+    listings: List[JobListing] = Field(default_factory=list)
+    linkedin_job_url: str = ""
+    naukri_job_url: str = ""
+    indeed_job_url: str = ""
+    monster_url: str = ""
+    shine_url: str = ""
     remote_jobs_url: str = ""
 
 

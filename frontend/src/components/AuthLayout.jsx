@@ -3,23 +3,23 @@ export default function AuthLayout({ children }) {
     <div className="auth-wrap">
       <div className="auth-art">
         <div className="brandmark">
-          <img src="/logo.png" alt="ResumeGPT" className="brand-logo" /> ResumeGPT
+          <img src="/logo.png" alt="resumesGPT" className="brand-logo" /> resumesGPT
         </div>
         <div>
-          <h1>India's #1 AI Resume Builder — Get Hired Faster</h1>
+          <h1>Free India's #1 AI Resume Builder — Get Hired Faster</h1>
           <p style={{ lineHeight: 1.75, marginBottom: 16 }}>
             Build an ATS-optimized resume in minutes. Our AI scores, rewrites,
             and tailors your resume to every job — so you spend less time applying
             and more time interviewing.
           </p>
           <ul style={{ lineHeight: 2.1 }}>
-            <li>✅ <strong>ATS Score Checker</strong> — 100-point resume analysis</li>
-            <li>✅ <strong>AI Resume Rewriting</strong> — 3 strategic variants</li>
-            <li>✅ <strong>30 Professional Templates</strong> — PDF &amp; DOCX</li>
-            <li>✅ <strong>Cover Letter Generator</strong> — job-specific</li>
+            <li>✅ <strong>Free ATS Score Checker</strong> — 100-point resume analysis</li>
+            <li>✅ <strong>Free AI Resume Rewriting</strong> — 3 strategic variants</li>
+            <li>✅ <strong>Free 30 Professional Templates</strong> — PDF &amp; DOCX</li>
+            <li>✅ <strong>Free Cover Letter Generator</strong> — job-specific</li>
             <li>✅ <strong>Mock Interview Practice</strong> — AI scoring</li>
-            <li>✅ <strong>Job Search Agent</strong> — LinkedIn, Naukri, Indeed</li>
-            <li>✅ <strong>Career Roadmap</strong> — certifications &amp; courses</li>
+            <li>✅ <strong>Free Job Search Agent</strong> — LinkedIn, Naukri, Indeed</li>
+            <li>✅ <strong>Free Career Roadmap</strong> — certifications &amp; courses</li>
           </ul>
         </div>
 

@@ -58,7 +58,7 @@ def _get_mcp_tools():
     return tools
 
 
-_SYSTEM_PROMPT = """You are a career assistant for ResumeGPT. You help users find jobs on LinkedIn, research companies, and get career advice.
+_SYSTEM_PROMPT = """You are a career assistant for resumes-gpt. You help users find jobs on LinkedIn, research companies, and get career advice.
 
 You have access to LinkedIn tools to:
 - Search for jobs with filters (location, experience, remote, etc.)

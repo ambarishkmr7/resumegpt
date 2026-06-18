@@ -94,13 +94,14 @@ export default function CmsPage() {
     );
   };
 
+  if (loading) return <CmsSkeleton />;
+
   return (
     <>
       <Topbar />
       <div className="container cms-container">
         <Link to="/" className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }}>← Back</Link>
-        {loading && <CmsSkeleton />}
-        {!loading && error && <div className="error">{error}</div>}
+        {error && <div className="error">{error}</div>}
         {page && (
           <div className="cms-page">
             <h1 className="cms-title">{page.icon} {page.title.replace(/^[^\s]+\s/, "")}</h1>
@@ -125,7 +126,7 @@ export default function CmsPage() {
               <div style={{ marginTop: 28 }}>
                 <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Share Your Feedback</h2>
                 <p style={{ color: "#57514a", fontSize: 14, marginBottom: 0 }}>
-                  Your feedback helps us make ResumeGPT better for everyone.
+                  Your feedback helps us make resumesGPT better for everyone.
                 </p>
                 <FeedbackForm />
               </div>

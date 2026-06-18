@@ -13,8 +13,8 @@ export default function Topbar() {
   return (
     <nav className="topbar">
       <Link to="/" className="topbar-brand">
-        <img src="/logo.png" alt="ResumeGPT" className="topbar-logo" />
-        <span>ResumeGPT</span>
+        <img src="/logo.png" alt="resumes-gpt" className="topbar-logo" />
+        <span>resumes-gpt</span>
       </Link>
       <div className="spacer" />
       {user && (

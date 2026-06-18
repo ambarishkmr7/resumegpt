@@ -524,6 +524,120 @@ def suggest_jobs(content: ResumeContent, target_role=None, location=None) -> dic
     except Exception:
         return suggest_jobs(content, target_role, location)
 
+# ---------------- Rich job listings ----------------
+
+def suggest_job_listings(content, target_role=None, location=None, skills=None) -> dict:
+    """Return 10-15 rich job listings with full description, salary, and apply URLs."""
+    import random, urllib.parse
+
+    title = (target_role or (content.contact.title if content else None)
+             or "Software Engineer")
+    skill_list = skills or (content.skills[:10] if content else []) or []
+    loc = location or (content.contact.location if content else None) or "India"
+    loc_enc = urllib.parse.quote(loc)
+    title_enc = urllib.parse.quote(title)
+    title_slug = title.lower().replace(" ", "-")
+    loc_slug = loc.lower().replace(" ", "-").replace(",", "")
+
+    sources = ["LinkedIn", "Naukri", "Indeed", "Monster", "Shine"]
+
+    def apply_url(source, company, role, location):
+        co_enc = urllib.parse.quote(company)
+        ro_enc = urllib.parse.quote(role)
+        lo_enc = urllib.parse.quote(location)
+        co_slug = company.lower().replace(" ", "-")
+        ro_slug = role.lower().replace(" ", "-")
+        lo_slug = location.lower().replace(" ", "-").replace(",", "")
+        if source == "LinkedIn":
+            return f"https://www.linkedin.com/jobs/search/?keywords={ro_enc}+{co_enc}&location={lo_enc}"
+        if source == "Naukri":
+            return f"https://www.naukri.com/{ro_slug}-jobs-in-{co_slug}"
+        if source == "Indeed":
+            return f"https://in.indeed.com/jobs?q={ro_enc}+{co_enc}&l={lo_enc}"
+        if source == "Monster":
+            return f"https://www.monsterindia.com/srp/results?query={ro_enc}+{co_enc}&locations={lo_enc}"
+        # Shine
+        return f"https://www.shine.com/job-search/{ro_slug}-jobs-at-{co_slug}/"
+
+    global_links = dict(
+        linkedin_job_url=f"https://www.linkedin.com/jobs/search/?keywords={title_enc}&location={loc_enc}",
+        naukri_job_url=f"https://www.naukri.com/{title_slug}-jobs",
+        indeed_job_url=f"https://in.indeed.com/jobs?q={title_enc}&l={loc_enc}",
+        monster_url=f"https://www.monsterindia.com/srp/results?query={title_enc}&locations={loc_enc}",
+        shine_url=f"https://www.shine.com/job-search/{title_slug}-jobs-in-{loc_slug}/",
+        remote_jobs_url=f"https://www.remotejobs.in/search?q={title_enc}",
+    )
+
+    if not client.available():
+        fallback_companies = [
+            ("Google", 4.4), ("Microsoft", 4.2), ("Amazon", 3.9), ("Flipkart", 3.8),
+            ("Razorpay", 4.0), ("Swiggy", 3.7), ("Zerodha", 4.3), ("PhonePe", 4.0),
+            ("Infosys", 3.6), ("TCS", 3.7), ("Wipro", 3.5), ("Freshworks", 4.1),
+            ("CRED", 4.2), ("Meesho", 3.9), ("Ola", 3.6),
+        ]
+        job_types = ["Full-time", "Hybrid", "Remote", "Full-time", "Hybrid"]
+        salary_bands = ["₹10-18 LPA", "₹15-25 LPA", "₹20-35 LPA", "₹25-45 LPA", "₹30-50 LPA"]
+        exp_bands = ["1-3 years", "2-5 years", "3-6 years", "4-8 years", "5-10 years"]
+        listings = []
+        for i, (company, _) in enumerate(fallback_companies[:12]):
+            src = sources[i % len(sources)]
+            jtype = job_types[i % len(job_types)]
+            listings.append(dict(
+                job_title=title,
+                company=company,
+                location="Remote" if jtype == "Remote" else loc,
+                job_type=jtype,
+                experience_required=exp_bands[i % len(exp_bands)],
+                skills_required=skill_list[:5] or ["Communication", "Problem Solving"],
+                description=(
+                    f"We are looking for a {title} to join {company}. "
+                    f"You will work on challenging projects and collaborate with top engineers. "
+                    f"Strong knowledge of {', '.join(skill_list[:3]) if skill_list else 'relevant technologies'} required."
+                ),
+                salary_range=salary_bands[i % len(salary_bands)],
+                source=src,
+                posted_days_ago=(i % 10) + 1,
+                apply_url=apply_url(src, company, title, "Remote" if jtype == "Remote" else loc),
+            ))
+        return dict(listings=listings, **global_links)
+
+    skills_str = ", ".join(skill_list[:8]) if skill_list else "general technical skills"
+    system = (
+        "You are a senior recruiter with deep knowledge of the Indian tech job market. "
+        "Generate realistic, detailed job postings that reflect current market conditions."
+    )
+    prompt = (
+        f"Generate 12 realistic job listings for a candidate with the following profile:\n"
+        f"- Target role: {title}\n"
+        f"- Location preference: {loc}\n"
+        f"- Skills: {skills_str}\n\n"
+        "Mix sources across LinkedIn, Naukri, Indeed, Monster, Shine.\n"
+        "Include a variety of: Full-time, Remote, Hybrid, Contract roles.\n"
+        "Use real Indian tech companies (Flipkart, Razorpay, Swiggy, Zerodha, PhonePe, CRED, Meesho, "
+        "Freshworks, Infosys, TCS, Wipro, HCL, Google India, Microsoft India, Amazon India, etc.).\n"
+        "Salary ranges should reflect current Indian market (₹LPA format).\n\n"
+        "Return ONLY a JSON object:\n"
+        '{"listings": [{"job_title":"...","company":"...","location":"...","job_type":"Full-time|Remote|Hybrid|Contract",'
+        '"experience_required":"X-Y years","skills_required":["skill1","skill2",...],'
+        '"description":"2-3 sentence job description","salary_range":"₹X-Y LPA",'
+        f'"source":"LinkedIn|Naukri|Indeed|Monster|Shine","posted_days_ago":1,'
+        '"apply_url":"<correct search url for that source>"}], '
+        f'"linkedin_job_url":"{global_links["linkedin_job_url"]}",'
+        f'"naukri_job_url":"{global_links["naukri_job_url"]}",'
+        f'"indeed_job_url":"{global_links["indeed_job_url"]}",'
+        f'"monster_url":"{global_links["monster_url"]}",'
+        f'"shine_url":"{global_links["shine_url"]}",'
+        f'"remote_jobs_url":"{global_links["remote_jobs_url"]}"}}'
+    )
+    try:
+        result = client.complete_json(prompt, system=system, max_tokens=4000)
+        if "listings" not in result:
+            raise ValueError("missing listings key")
+        return result
+    except Exception:
+        return suggest_job_listings(None, target_role=title, location=loc, skills=skill_list)
+
+
 # ---------------- Professional writeup ----------------
 
 def generate_writeup(content: ResumeContent, purpose="linkedin") -> str:
@@ -1129,7 +1243,7 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"**{primary_skill} deep dive (1 week):**\n"
             f"• Internals, performance, best practices\n"
             f"• Prepare 3 project walkthroughs with metrics\n\n"
-            f"**Mock interviews:** Use ResumeGPT Mock Interview, Pramp.com (free), interviewing.io")
+            f"**Mock interviews:** Use resumes-gpt Mock Interview, Pramp.com (free), interviewing.io")
         return {"response": r, "suggestions": _gen_smart_suggestions(q, covered | {"interview_tech"}, title, skills, exp_years)}
 
     # BEHAVIORAL INTERVIEW
@@ -1194,7 +1308,7 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"• Naukri: Update profile weekly (bumps visibility)\n"
             f"• **Referrals are 5x more effective** — message 2nd-degree connections\n"
             f"• Apply within 48 hours of a posting (early applicants get 3x more callbacks)\n"
-            f"• Customize your resume per application using ResumeGPT AI Rewrite\n\n"
+            f"• Customize your resume per application using resumes-gpt AI Rewrite\n\n"
             f"**Track everything:** Spreadsheet with company, role, date applied, status, follow-up date")
         return {"response": r, "suggestions": _gen_smart_suggestions(q, covered | {"companies"}, title, skills, exp_years)}
 
@@ -1208,10 +1322,10 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"**Quick wins (do today):**\n"
             f"• Add numbers to at least 60% of bullets (currently {m_pct}%)\n"
             f"• Replace weak verbs ('responsible for', 'worked on') → power verbs ('led', 'built', 'reduced')\n"
-            f"• Use ResumeGPT AI Improve for instant enhancement\n\n"
+            f"• Use resumes-gpt AI Improve for instant enhancement\n\n"
             f"**LinkedIn optimization:**\n"
             f"• Headline: '{title} | {skills[0] if skills else 'Tech'} | Open to opportunities'\n"
-            f"• About: Use ResumeGPT Professional Writeup generator\n"
+            f"• About: Use resumes-gpt Professional Writeup generator\n"
             f"• Post 1-2x/week about your work — even short insights get engagement")
         return {"response": r, "suggestions": _gen_smart_suggestions(q, covered | {"resume"}, title, skills, exp_years)}
 
@@ -1301,7 +1415,7 @@ def _deep_counsel(question, name, title, skills, skills_str, exp_count, exp_year
             f"• Update LinkedIn immediately — '#OpenToWork' gets 40% more recruiter views\n"
             f"• Tell your network — people WANT to help. Post: 'I'm exploring new opportunities as a {title}'\n\n"
             f"**Week 2-3: Prepare**\n"
-            f"• Use ResumeGPT to refresh your resume with latest achievements\n"
+            f"• Use resumes-gpt to refresh your resume with latest achievements\n"
             f"• Prepare 5 STAR stories and practice interviews\n\n"
             f"**Week 4+: Execute**\n"
             f"• Apply to 10-15 roles/week (quality > quantity)\n"

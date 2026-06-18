@@ -34,8 +34,8 @@ export default function Footer() {
     <footer className="app-footer">
       <div className="footer-inner">
         <div className="footer-brand">
-          <img src="/logo.png" alt="ResumeGPT" className="footer-logo" />
-          <span>ResumeGPT</span>
+          <img src="/logo.png" alt="resumesGPT" className="footer-logo" />
+          <span>resumesGPT</span>
           <p className="footer-tagline">AI-Powered Career Builder</p>
           <p className="footer-tagline" style={{ marginTop: 6, fontSize: 12 }}>
             India's smartest resume tool — ATS scoring,<br />
@@ -64,11 +64,11 @@ export default function Footer() {
 
       <div className="footer-bottom">
         <span>
-          Powered by <a href="https://decalabs.in/" target="_blank" rel="noopener noreferrer"
-            style={{ color: "#f59e0b", textDecoration: "none", fontWeight: 600 }}>DecaLabs</a>
+          Powered by <a href="https://kronossolution.com/" target="_blank" rel="noopener noreferrer"
+            style={{ color: "#f59e0b", textDecoration: "none", fontWeight: 600 }}>KronosSolution</a>
           {" · "}© {new Date().getFullYear()}{" "}
-          <a href="https://resumegpt.co.in" target="_blank" rel="noopener noreferrer"
-            style={{ color: "#f59e0b", textDecoration: "none" }}>ResumeGPT.co.in</a>
+          <a href="https://resumes-gpt.com" target="_blank" rel="noopener noreferrer"
+            style={{ color: "#f59e0b", textDecoration: "none" }}>resumes-gpt.com</a>
           . All rights reserved.
         </span>
       </div>
