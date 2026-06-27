@@ -5,7 +5,8 @@ import { api } from "../api/client";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
 import SubscriptionModal from "../components/SubscriptionModal.jsx";
-import AdSlot from "../components/AdSlot.jsx";
+import AdCarousel from "../components/AdCarousel.jsx";
+import ProcessingOverlay from "../components/ProcessingOverlay.jsx";
 import "../../public/css/style.css";
 
 export default function LandingPage() {
@@ -18,6 +19,7 @@ export default function LandingPage() {
   const [newYears, setNewYears] = useState(3);
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [actionError, setActionError] = useState("");
   const fileRef = useRef();
   const [siteStats, setSiteStats] = useState({ total_resumes: null, ats_pass_rate: null });
@@ -62,13 +64,13 @@ export default function LandingPage() {
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    setBusy(true); setActionError("");
+    setBusy(true); setUploading(true); setActionError("");
     try {
       await ensureAuth();
       const r = await api.uploadResume(file, file.name.replace(/\.[^.]+$/, ""));
       navigate(`/editor/${r.id}`);
     } catch (err) { setActionError(err.message); }
-    finally { setBusy(false); e.target.value = ""; }
+    finally { setBusy(false); setUploading(false); e.target.value = ""; }
   };
 
   const removeResume = async (id) => {
@@ -132,7 +134,7 @@ export default function LandingPage() {
       <div className="side-ad-wrapper" style={{ display: "flex", alignItems: "flex-start", maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>
 
         <div className="ad-col-left" style={{ flexShrink: 0, padding: "24px 10px 0" }}>
-          <AdSlot slot="1111111111" format="vertical" />
+          <AdCarousel />
         </div>
 
         <div className="container" style={{ flex: 1, minWidth: 0 }}>
@@ -314,7 +316,7 @@ export default function LandingPage() {
         </div>
 
         <div className="ad-col-right" style={{ flexShrink: 0, padding: "24px 10px 0" }}>
-          <AdSlot slot="2222222222" format="vertical" />
+          <AdCarousel />
         </div>
 
       </div>
@@ -358,6 +360,8 @@ export default function LandingPage() {
           onSuccess={() => { setShowSub(false); api.subscriptionStatus().then(setSubStatus).catch(() => {}); }}
         />
       )}
+
+      <ProcessingOverlay visible={uploading} />
 
       <style>{`
         .stats-grid-inner {

@@ -11,11 +11,14 @@ print("PUBLIC EXISTS =", os.path.exists(public_dir))
 
 if os.path.exists(public_dir):
     print("PUBLIC CONTENTS =", os.listdir(public_dir))
-    
+
+FRONTEND_DIST = os.path.normpath(os.path.join(APP_DIR, "..", "..", "frontend", "dist"))
+
 import logging
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 from app.auth.router import router as auth_router
@@ -131,3 +134,19 @@ def health():
     db_url = settings.database_url
     db_type = "sqlite" if "sqlite" in db_url else "mysql" if "mysql" in db_url else "postgresql" if "postgres" in db_url else "unknown"
     return {"status": "ok", "ai_enabled": bool(settings.ANTHROPIC_API_KEY), "db": db_type}
+
+
+# ── Serve React build (must be last — catches everything not matched above) ────
+@app.get("/{full_path:path}", include_in_schema=False)
+async def _spa_fallback(full_path: str):
+    if not os.path.isdir(FRONTEND_DIST):
+        raise HTTPException(status_code=404, detail="Frontend build not found. Run: cd frontend && npm run build")
+    # Serve an exact file if it exists (JS, CSS, favicon, robots.txt, etc.)
+    candidate = os.path.join(FRONTEND_DIST, full_path)
+    if full_path and os.path.isfile(candidate):
+        return FileResponse(candidate)
+    # Everything else → index.html (React Router handles the URL client-side)
+    index = os.path.join(FRONTEND_DIST, "index.html")
+    if not os.path.isfile(index):
+        raise HTTPException(status_code=404, detail="index.html not found. Run: cd frontend && npm run build")
+    return FileResponse(index)

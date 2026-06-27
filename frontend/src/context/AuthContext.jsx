@@ -1,36 +1,60 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import { api, BASE } from "../api/client";
 
 const AuthContext = createContext(null);
 
+function readStoredUser() {
+  try {
+    const raw = localStorage.getItem("user");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUserState] = useState(() => readStoredUser());
+  // Skip loading skeleton when we already have a cached user; background-verify the token
+  const [loading, setLoading] = useState(() => !readStoredUser());
   const [profilePhoto, setProfilePhoto] = useState(null);
   const photoFetched = useRef(false);
+
+  const setUser = useCallback((u) => {
+    setUserState(u);
+    if (u) {
+      localStorage.setItem("user", JSON.stringify(u));
+    } else {
+      localStorage.removeItem("user");
+    }
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) {
+      setUser(null);
       setLoading(false);
       return;
     }
+    // Verify token in background — don't block UI when user is already cached
     api
       .me()
-      .then(setUser)
+      .then((freshUser) => { setUser(freshUser); setLoading(false); })
       .catch((err) => {
         const msg = err?.message || "";
         const statusMatch = msg.match(/\((\d{3})\)/);
         const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : null;
         if (status === 401 || status === 403) {
-          localStorage.removeItem("token");
+          // Only clear if the token hasn't been replaced by a concurrent login
+          if (localStorage.getItem("token") === token) {
+            localStorage.removeItem("token");
+            setUser(null);
+          }
         }
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
   }, []);
 
-  // Fetch profile photo once per session (not on every mount)
+  // Fetch profile photo once per session
   useEffect(() => {
     if (!user || photoFetched.current) return;
     photoFetched.current = true;
@@ -70,7 +94,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setProfilePhoto(null);
     photoFetched.current = false;
-  }, []);
+  }, [setUser]);
 
   return (
     <AuthContext.Provider value={{

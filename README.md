@@ -1,165 +1,260 @@
-# ResuméForge — Resume Builder
+# resumesGPT — AI Resume Builder
 
-A full-stack resume builder inspired by [Enhancv](https://enhancv.com/). Upload a
-résumé, edit every section in a live editor, switch templates, see an explainable
-ATS score with concrete fixes, pull skills from a reference résumé, generate a
-tailored cover letter, and download as **PDF** or **DOCX**.
-
-## Features
-
-| # | Feature | Where |
-|---|---------|-------|
-| 1 | Register / login / logout / forgot + reset password (JWT) | `backend/app/auth`, `frontend/src/pages/{Login,Register,ForgotPassword,ResetPassword}.jsx` |
-| 2 | Upload résumé (PDF/DOCX) → parsed into editable sections | `parser.py`, Dashboard "Import" |
-| 3 | Template gallery (5 distinct layouts) re-styles the résumé instantly | `templates/registry.py`, `TemplateSelector.jsx`, `ResumePreview.jsx` |
-| 4 | Editable panel for every section (contact, summary, experience, education, skills, projects, certs) | `ResumeForm.jsx` |
-| 5 | Download as PDF and DOCX | `generator.py`, Editor toolbar |
-| 6 | ATS score (0–100) with per-category breakdown | `ats.py`, `ATSPanel.jsx` |
-| 7 | Concrete suggestions to push the score toward 100% + one-click "AI improve" | `ats.py` issues + `ai/services.py` |
-| 8 | Upload someone else's résumé as a **reference** to enrich your own | `parse-reference` endpoint, Editor "Use reference résumé" |
-| 9 | Generate a cover letter from the résumé | `ai/services.py`, `CoverLetterModal.jsx` |
-
-## Tech stack
-
-- **Backend:** FastAPI · SQLAlchemy 2 · SQLite (dev) · JWT (python-jose) · bcrypt ·
-  pdfplumber + python-docx (parsing) · reportlab + python-docx (generation)
-- **Frontend:** React 18 · React Router 6 · Vite · plain CSS design system
-- **AI (optional):** Anthropic Messages API via httpx. Every AI feature has a
-  deterministic fallback, so the app is fully functional **without** an API key.
-
-## Quick start
-
-### 1. One-time setup
-
-**Backend dependencies (Python):**
-```bash
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-cd ..
-```
-> Edit `backend\.env` — set `SECRET_KEY` at minimum. `ANTHROPIC_API_KEY` is optional.
-
-**Frontend + root dependencies (Node):**
-```bash
-npm run install:all
-copy frontend\.env.example frontend\.env
-```
-
-### 2. Start (development)
-
-```bash
-npm run dev
-```
-
-Starts both servers in a single terminal with color-coded logs:
-- Backend → `http://localhost:8000` (cyan)
-- Frontend → `http://localhost:5173` (magenta)
-
-Press `Ctrl+C` to stop both.
-
-API docs auto-generated at `http://localhost:8000/docs`.
-
-### 3. Start (production)
-
-```bash
-npm run prod
-```
-
-Builds the frontend into `frontend/dist/`, then starts the backend with 4 workers (no hot-reload). Serve `frontend/dist/` via nginx, Caddy, or a static host (Vercel, Netlify, etc.).
+India's AI-powered resume platform. Build ATS-optimised resumes, practice mock interviews, get personalised career roadmaps, and land your dream job — all in one place.
 
 ---
 
-### Running backend or frontend individually
+## Features
 
-```bash
-npm run dev:backend   # backend only — http://localhost:8000
-npm run dev:frontend  # frontend only — http://localhost:5173
-npm run build         # build frontend only
-npm run start         # start backend in production mode only
-```
+### Free (for everyone)
 
-Open `http://localhost:5173`, register an account, and start building.
+| # | Feature |
+|---|---------|
+| 1 | Create & edit unlimited resumes with 30 professional templates |
+| 2 | Import existing resume — upload PDF or DOCX and parse it into an editable format |
+| 3 | Live resume editor (contact, summary, experience, education, skills, projects, certifications) |
+| 4 | ATS score (0–100) with per-category breakdown and concrete fix suggestions |
+| 5 | One-click AI rewrite — generates 3 strategic resume variants |
+| 6 | Career analysis — strengths, weaknesses, skill gap across 5 categories |
+| 7 | Career roadmap — certifications, YouTube channels, Scaler / Coursera / Udemy links |
+| 8 | Job search agent — LinkedIn, Naukri, Indeed, RemoteJobs.in with Glassdoor ratings |
+| 9 | Cover letter generator tailored to each job |
+| 10 | PDF & DOCX download with template-matched styling |
+| 11 | Reference resume import — upload someone else's resume to enrich your own skills |
+| 12 | Register / Login / Google OAuth / Facebook OAuth / Phone OTP (Firebase) |
+| 13 | Forgot & reset password (email link) |
 
-## How uploads, templates, and editing fit together
+### Elite — ₹1,999 one-time lifetime
 
-When you upload a résumé, the app **extracts your content** (contact, summary,
-experience, skills, education, etc.) into a structured format, then renders it as
-a clean, professional résumé you can edit and restyle. This is the same model
-Enhancv uses: rather than preserving the exact pixels of your original file, it
-captures *what your résumé says* and lets you control *how it looks*.
+| Feature |
+|---------|
+| AI Career Counseling Bot — multi-turn conversation with full resume context |
+| Mock Interview Practice — role-specific behavioral, technical & situational questions |
+| Interview Rating & Gap Analysis — 0–100 score per answer with ideal-answer reference |
+| AI Job Application Agent — searches jobs and generates tailored application materials |
+| Priority support & early access to new features |
 
-- The **preview** reflects your real content and updates live as you edit.
-- The **template gallery** offers five visually distinct layouts — Classic
-  (centered serif), Modern (accent bars), Executive (two-column sidebar), Minimal
-  (airy whitespace), and Creative (colored banner). Clicking one instantly
-  restyles the whole résumé, and the downloaded PDF/DOCX matches the chosen
-  template's accent and font.
-- The **enhancement toolbar** at the top of the editor provides the AI improve,
-  cover-letter, reference-résumé, and PDF/DOCX download actions.
+---
 
-If you instead need the *original uploaded file* displayed verbatim (e.g. an
-embedded PDF viewer), that's a separate feature from the editable/restylable
-résumé and can be added alongside it.
+## Tech Stack
 
-## The pieces in detail
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 18, React Router 6, Vite 5, plain CSS design system |
+| **Backend** | FastAPI, SQLAlchemy 2, Starlette, Uvicorn |
+| **Database** | SQLite (dev) · MySQL 8 (production) |
+| **AI — primary** | Google Gemini (`gemini-flash-lite-latest` by default) |
+| **AI — alternatives** | Anthropic Claude · xAI Grok (OpenAI-compatible) |
+| **Auth** | JWT (python-jose + bcrypt) · Google OAuth · Facebook OAuth · Firebase Phone OTP |
+| **Payments** | Razorpay (₹1,999 one-time Elite plan) |
+| **File storage** | Local filesystem (dev) · S3-compatible: Cloudflare R2, AWS S3, MinIO (production) |
+| **Resume parsing** | pdfplumber, python-docx, LLM-assisted fallback |
+| **Resume generation** | reportlab (PDF), python-docx (DOCX) |
 
-The shape of a résumé (`ResumeContent` in `backend/app/schemas.py`) is the single
-contract shared across **parse → edit → score → generate**. The frontend factories
-in `frontend/src/lib.js` mirror that schema, so any field added on the backend just
-needs a matching factory entry.
+---
 
-- **Parsing** (`parser.py`) extracts raw text then heuristically segments it by
-  section headers and regex (contact details, date ranges, bullets). If an
-  `ANTHROPIC_API_KEY` is set, an AI parse runs first for higher accuracy and falls
-  back to heuristics on any failure.
-- **ATS scoring** (`ats.py`) is deliberately **rule-based and explainable** — a
-  100-point weighted rubric (contact, summary, experience quality, skills,
-  education, formatting, and keyword match when a job description is supplied).
-  Every deduction produces an `issue` with a `severity` and a concrete
-  `suggestion`, which is exactly what the UI lists under "Suggestions to reach
-  100%."
-- **Generation** (`generator.py`) renders the same content to PDF (reportlab) and
-  DOCX (python-docx), reading the accent color from the selected template.
-
-## Notes / production TODOs
-
-This is a complete, runnable reference implementation. For production you'd want:
-
-- **Email delivery** for forgot-password. In dev the endpoint returns a
-  `dev_reset_link` in the JSON response instead of emailing it.
-- **Postgres** instead of SQLite, with **Alembic** migrations (currently tables are
-  auto-created on startup).
-- **Refresh tokens / token revocation** (logout is currently stateless client-side).
-- **Hardened file storage** (size/type limits exist; add virus scanning + object
-  storage like S3 for multi-instance deploys).
-- Legacy `.doc` is **not** supported — only `.docx` and `.pdf`.
-
-## Project layout
+## Project Structure
 
 ```
-resume-builder/
+resumegpt/
 ├── backend/
 │   ├── app/
-│   │   ├── auth/          # register, login, logout, forgot/reset password
-│   │   ├── core/          # security (bcrypt + JWT), dependencies
-│   │   ├── resumes/       # parser, ats, generator, router
-│   │   ├── templates/     # template registry + router
-│   │   ├── ai/            # Anthropic client + services (with fallbacks)
-│   │   ├── models.py      # User, Resume
-│   │   ├── schemas.py     # the shared data contract
-│   │   └── main.py        # app factory, CORS, router wiring
-│   └── requirements.txt
-└── frontend/
-    └── src/
-        ├── pages/         # Login, Register, ForgotPassword, ResetPassword, Dashboard, Editor
-        ├── components/    # ResumeForm, ResumePreview, TemplateSelector, ATSPanel, CoverLetterModal, Topbar, AuthLayout
-        ├── api/client.js  # typed-ish fetch wrapper for the whole API
-        ├── context/       # AuthContext (token persistence)
-        └── styles/app.css # design system
+│   │   ├── auth/            # register, login, Google/Facebook OAuth, forgot/reset password
+│   │   ├── core/            # JWT security, bcrypt, request dependencies
+│   │   ├── resumes/         # parser, ats scorer, generator, upload/CRUD router
+│   │   ├── templates/       # 30-template registry + router
+│   │   ├── ai/              # Gemini / Claude / Grok clients + all AI services
+│   │   ├── agent/           # LangGraph job-search & career agent
+│   │   ├── subscription/    # Razorpay payment & subscription router
+│   │   ├── profile/         # user profile router
+│   │   ├── admin/           # admin panel router
+│   │   ├── public_routes/   # unauthenticated stats & public data
+│   │   ├── models.py        # SQLAlchemy ORM models
+│   │   ├── schemas.py       # Pydantic request/response schemas (shared contract)
+│   │   ├── config.py        # settings loaded from .env
+│   │   ├── database.py      # engine, session factory
+│   │   ├── storage.py       # local / S3 storage backend
+│   │   └── main.py          # FastAPI app factory, middleware, router wiring, SPA fallback
+│   ├── requirements.txt
+│   ├── vercel.json
+│   └── .env                 # (create from the template below — never commit)
+├── frontend/
+│   ├── src/
+│   │   ├── pages/           # LandingPage, Dashboard, Editor, Login, Register, etc.
+│   │   ├── components/      # ResumeForm, ResumePreview, ATSPanel, AIToolsPanel, …
+│   │   ├── api/client.js    # typed fetch wrapper for all backend endpoints
+│   │   ├── context/         # AuthContext (JWT persistence)
+│   │   └── utils/           # pendingAction, helpers
+│   ├── public/css/          # global design system CSS
+│   ├── vite.config.js
+│   └── .env                 # (create from the template below — never commit)
+├── schema.sql               # MySQL schema for production setup
+├── package.json             # root scripts (dev, build, prod, install:all)
+├── start.ps1                # Windows PowerShell dev launcher (opens split terminals)
+└── README.md
 ```
 
+---
 
-npm install --save-dev vite@5.4.8 @vitejs/plugin-react@4.3.1
+## Prerequisites
+
+- **Python** 3.11+
+- **Node.js** 18+ and npm
+- **MySQL 8** for production (SQLite works out-of-the-box for development)
+
+---
+
+## Quick Start — Development (two ports)
+
+Both servers start together with color-coded logs.
+
+### 1. Clone & install
+
+```bash
+git clone <repo-url>
+cd resumegpt
+
+# Install root (concurrently) + frontend dependencies
+npm run install:all
+
+# Install backend Python dependencies
+cd backend
+python -m venv .venv
+.venv\Scripts\activate       # Windows
+# source .venv/bin/activate  # macOS / Linux
+pip install -r requirements.txt
+cd ..
+```
+
+### 2. Configure environment
+
+## Production — Single Port (recommended)
+
+Build the React app once; FastAPI serves it alongside the API from **one port**.
+
+```bash
+# 1. Build the frontend
+cd fronend
+npm run build
+# Output: frontend/dist/
+
+# 2. Start FastAPI (serves API + React app on port 8000)
+cd backend
+uvicorn app.main:app --reload --port 8000
+```
+
+Or use the root shortcut (builds + starts in one command):
+
+```bash
+cd backend
+npm run prod
+```
+
+Open **http://localhost:8000** — the React SPA and all `/api/*` routes are served from the same process and port. No CORS configuration needed.
+
+> Rebuild the frontend (`npm run build`) whenever you change frontend code. The backend reads from `frontend/dist/` at request time.
+
+---
+
+## MySQL Database Setup (production)
+
+```sql
+-- Run as MySQL root
+CREATE DATABASE resumesgpt_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+```bash
+# Apply schema
+mysql -h localhost -u root -p resumesgpt_db < schema.sql
+```
+
+Then set the connection in `backend/.env`:
+```env
+DATABASE_URL=mysql+pymysql://user:password@localhost:3306/resumesgpt_db?charset=utf8mb4
+```
+
+SQLAlchemy auto-creates tables on startup in development (SQLite). For production MySQL, use `schema.sql`.
+
+---
+
+## Available npm Scripts
+
+| Script | Description |
+|---|---|
+| `npm run dev` | Start both backend and frontend with color-coded logs |
+| `npm run dev:backend` | Backend only — http://localhost:8000 |
+| `npm run dev:frontend` | Frontend only — http://localhost:5173 |
+| `npm run build` | Build React app → `frontend/dist/` |
+| `npm run start` | Start backend in production mode (4 workers, no reload) |
+| `npm run prod` | Build frontend + start backend (single-port production) |
+| `npm run install:all` | Install root + frontend node_modules |
+
+---
+
+## API Overview
+
+All routes are prefixed with `/api/`.
+
+| Prefix | Description |
+|---|---|
+| `/api/auth` | Register, login, Google/Facebook OAuth, forgot/reset password, guest register |
+| `/api/resumes` | Create, list, get, update, delete resumes; upload PDF/DOCX; download PDF/DOCX |
+| `/api/templates` | List available templates |
+| `/api/agent` | AI job search, career analysis, career roadmap, cover letter, ATS scoring |
+| `/api/subscription` | Razorpay order creation, payment verification, subscription status |
+| `/api/profile` | User profile CRUD |
+| `/api/admin` | Admin-only user and content management |
+| `/api/public` | Unauthenticated stats (total resumes, ATS pass rate) |
+| `/api/health` | Health check — returns DB type and AI status |
+
+Full interactive docs at **`/docs`** (Swagger UI) when the backend is running.
+
+---
+
+## Deployment
+
+### Vercel (backend only)
+
+`backend/vercel.json` is configured to deploy the FastAPI app via `@vercel/python`. Point Vercel to the `backend/` directory. The React build would need to be served separately (Vercel static site, Netlify, or similar).
+
+### Single-server (VPS / Docker)
+
+1. Build the frontend: `npm run build`
+2. Copy `frontend/dist/` into the backend directory (or keep the default relative path — it resolves automatically)
+3. Run `uvicorn app.main:app --host 0.0.0.0 --port 80 --workers 4`
+4. Optionally put nginx in front for SSL termination and gzip
+
+---
+
+## Environment Variable Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `SECRET_KEY` | `CHANGE_ME…` | JWT signing secret — **always override in production** |
+| `DATABASE_URL` | *(built from DB_\*)* | Full SQLAlchemy URL; overrides individual DB_\* vars |
+| `DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD` | localhost / 3306 / … | MySQL connection pieces |
+| `GEMINI_API_KEY` | — | Primary AI provider (Google AI Studio) |
+| `ANTHROPIC_API_KEY` | — | Alternative AI provider |
+| `GROK_API_KEY` | — | xAI Grok (OpenAI-compatible) |
+| `AI_MODEL` | `gemini-flash-lite-latest` | Active model identifier |
+| `STORAGE_BACKEND` | `local` | `local` or `s3` |
+| `S3_ENDPOINT_URL` | — | R2: `https://<id>.r2.cloudflarestorage.com` / AWS: leave empty |
+| `S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY` | — | S3-compatible credentials |
+| `S3_BUCKET_NAME` | `resume` | Bucket name |
+| `GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET` | — | Google OAuth 2.0 |
+| `FACEBOOK_APP_ID / FACEBOOK_APP_SECRET` | — | Facebook Login |
+| `RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET` | — | Razorpay payment gateway |
+| `ADMIN_EMAIL / ADMIN_PASSWORD` | — | Auto-seeded admin account on startup |
+| `FRONTEND_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `MAX_UPLOAD_MB` | `10` | Maximum file upload size |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` (1 day) | JWT expiry |
+
+---
+
+## Notes
+
+- **Email delivery** for password reset is not wired to an SMTP provider. In development, the reset link is returned directly in the API response (`dev_reset_link`).
+- **Legacy `.doc`** format is not supported — only `.docx` and `.pdf`.
+- **AI features degrade gracefully** — all AI endpoints have deterministic fallbacks so the app remains fully functional without any API keys configured.
+- **Token revocation** is not implemented — logout is stateless (client deletes the token). For production, add a token blocklist or use short-lived tokens with refresh.

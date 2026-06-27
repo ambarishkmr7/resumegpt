@@ -4,8 +4,9 @@ import { api } from "../api/client";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
 import SubscriptionModal from "../components/SubscriptionModal.jsx";
-import AdSlot from "../components/AdSlot.jsx";
+import AdCarousel from "../components/AdCarousel.jsx";
 import { SkeletonLine, SkeletonBlock } from "../components/Skeleton.jsx";
+import ProcessingOverlay from "../components/ProcessingOverlay.jsx";
 import "../../public/css/style.css";
 function DashboardSkeleton() {
   return (
@@ -69,6 +70,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [showSub, setShowSub] = useState(false);
   const [subStatus, setSubStatus] = useState(null);
@@ -130,12 +132,12 @@ export default function Dashboard() {
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    setBusy(true); setError("");
+    setBusy(true); setUploading(true); setError("");
     try {
       const r = await api.uploadResume(file, file.name.replace(/\.[^.]+$/, ""));
       navigate(`/editor/${r.id}`);
     } catch (err) { setError(err.message); }
-    finally { setBusy(false); e.target.value = ""; }
+    finally { setBusy(false); setUploading(false); e.target.value = ""; }
   };
 
   const remove = async (id) => {
@@ -253,7 +255,7 @@ export default function Dashboard() {
 
         {/* Left vertical ad */}
         <div className="ad-col-left" style={{ flexShrink: 0, padding: "24px 10px 0" }}>
-          <AdSlot slot="1111111111" format="vertical" />
+          <AdCarousel />
         </div>
 
         {/* Main content */}
@@ -422,7 +424,7 @@ export default function Dashboard() {
 
         {/* Right vertical ad */}
         <div className="ad-col-right" style={{ flexShrink: 0, padding: "24px 10px 0" }}>
-          <AdSlot slot="2222222222" format="vertical" />
+          <AdCarousel />
         </div>
 
       </div>{/* end side-ad wrapper */}
@@ -466,6 +468,8 @@ export default function Dashboard() {
           onSuccess={() => { setShowSub(false); load(); }}
         />
       )}
+
+      <ProcessingOverlay visible={uploading} />
 
       <style>{`
         /* ── Profile completion card: stack on mobile ── */

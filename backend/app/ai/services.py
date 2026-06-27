@@ -526,61 +526,168 @@ def suggest_jobs(content: ResumeContent, target_role=None, location=None) -> dic
 
 # ---------------- Rich job listings ----------------
 
-def suggest_job_listings(content, target_role=None, location=None, skills=None) -> dict:
-    """Return 10-15 rich job listings with full description, salary, and apply URLs."""
-    import random, urllib.parse
+def _skill_search_url(source: str, role: str, loc: str, skills: list) -> str:
+    """Build a skill-enriched search URL for each portal so clicks land on relevant results."""
+    import urllib.parse
+    top = skills[:2]
+    combined = f"{role} {' '.join(top)}".strip() if top else role
+    q = urllib.parse.quote(combined)
+    l = urllib.parse.quote(loc)
+    r_slug = re.sub(r"[^a-z0-9]+", "-", role.lower()).strip("-")
+    l_slug = re.sub(r"[^a-z0-9]+", "-", loc.lower()).strip("-")
+    if source == "LinkedIn":
+        return f"https://www.linkedin.com/jobs/search/?keywords={q}&location={l}&f_TPR=r2592000&sortBy=DD"
+    if source == "Naukri":
+        return f"https://www.naukri.com/jobs?q={q}&l={l}&jobAge=30"
+    if source == "Indeed":
+        return f"https://in.indeed.com/jobs?q={q}&l={l}&fromage=30&sort=date"
+    if source == "Monster":
+        return f"https://www.monsterindia.com/srp/results?query={q}&locations={l}"
+    # Shine
+    return f"https://www.shine.com/job-search/{r_slug}-jobs-in-{l_slug}/"
 
-    title = (target_role or (content.contact.title if content else None)
-             or "Software Engineer")
+
+def suggest_job_listings(content, target_role=None, location=None, skills=None) -> dict:
+    """
+    Return real job listings:
+    - LinkedIn: real scraped postings with actual job-view URLs
+    - Naukri / Indeed / Monster / Shine: skill-enriched search cards that land
+      on a pre-filtered results page matching the user's role and top skills
+    Falls back to AI/deterministic listings (with fixed skill search URLs) if
+    LinkedIn scraping fails.
+    """
+    import urllib.parse
+
+    title = (target_role or (content.contact.title if content else None) or "Software Engineer")
     skill_list = skills or (content.skills[:10] if content else []) or []
     loc = location or (content.contact.location if content else None) or "India"
-    loc_enc = urllib.parse.quote(loc)
+
+    top_skills = skill_list[:3]
+    combined = f"{title} {' '.join(top_skills[:2])}".strip() if top_skills else title
     title_enc = urllib.parse.quote(title)
-    title_slug = title.lower().replace(" ", "-")
-    loc_slug = loc.lower().replace(" ", "-").replace(",", "")
+    loc_enc = urllib.parse.quote(loc)
+    combined_enc = urllib.parse.quote(combined)
+    title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    loc_slug = re.sub(r"[^a-z0-9]+", "-", loc.lower()).strip("-")
 
-    sources = ["LinkedIn", "Naukri", "Indeed", "Monster", "Shine"]
-
-    def apply_url(source, company, role, location):
-        co_enc = urllib.parse.quote(company)
-        ro_enc = urllib.parse.quote(role)
-        lo_enc = urllib.parse.quote(location)
-        co_slug = company.lower().replace(" ", "-")
-        ro_slug = role.lower().replace(" ", "-")
-        lo_slug = location.lower().replace(" ", "-").replace(",", "")
-        if source == "LinkedIn":
-            return f"https://www.linkedin.com/jobs/search/?keywords={ro_enc}+{co_enc}&location={lo_enc}"
-        if source == "Naukri":
-            return f"https://www.naukri.com/{ro_slug}-jobs-in-{co_slug}"
-        if source == "Indeed":
-            return f"https://in.indeed.com/jobs?q={ro_enc}+{co_enc}&l={lo_enc}"
-        if source == "Monster":
-            return f"https://www.monsterindia.com/srp/results?query={ro_enc}+{co_enc}&locations={lo_enc}"
-        # Shine
-        return f"https://www.shine.com/job-search/{ro_slug}-jobs-at-{co_slug}/"
-
+    # Skill-enriched "Browse All" URLs for each portal
     global_links = dict(
-        linkedin_job_url=f"https://www.linkedin.com/jobs/search/?keywords={title_enc}&location={loc_enc}",
-        naukri_job_url=f"https://www.naukri.com/{title_slug}-jobs",
-        indeed_job_url=f"https://in.indeed.com/jobs?q={title_enc}&l={loc_enc}",
-        monster_url=f"https://www.monsterindia.com/srp/results?query={title_enc}&locations={loc_enc}",
+        linkedin_job_url=f"https://www.linkedin.com/jobs/search/?keywords={combined_enc}&location={loc_enc}&f_TPR=r2592000&sortBy=DD",
+        naukri_job_url=f"https://www.naukri.com/jobs?q={combined_enc}&l={loc_enc}&jobAge=30",
+        indeed_job_url=f"https://in.indeed.com/jobs?q={combined_enc}&l={loc_enc}&fromage=30&sort=date",
+        monster_url=f"https://www.monsterindia.com/srp/results?query={combined_enc}&locations={loc_enc}",
         shine_url=f"https://www.shine.com/job-search/{title_slug}-jobs-in-{loc_slug}/",
         remote_jobs_url=f"https://www.remotejobs.in/search?q={title_enc}",
     )
 
+    linkedin_listings = []
+
+    # ── 1. Scrape real LinkedIn jobs ──────────────────────────────────────────
+    try:
+        from app import linkedin_tools
+
+        scrape_result = linkedin_tools.search_jobs({
+            "keywords": combined,
+            "location": loc,
+            "datePosted": "past-month",
+            "sortBy": "most-recent",
+            "limit": 20,
+        })
+        scraped = scrape_result.get("jobs", [])
+
+        def _days_ago(s: str) -> int:
+            if not s or s == "Unknown":
+                return 7
+            t = s.lower()
+            if any(x in t for x in ("hour", "minute", "second", "just", "today")):
+                return 1
+            m = re.search(r"(\d+)", t)
+            n = int(m.group(1)) if m else 1
+            if "week" in t:
+                return n * 7
+            if "month" in t:
+                return n * 30
+            return n
+
+        def _jtype(wp: str) -> str:
+            return {"remote": "Remote", "hybrid": "Hybrid"}.get(wp, "Full-time")
+
+        for job in scraped:
+            days = _days_ago(job.get("postedTimeAgo", ""))
+            if days > 45 or not job.get("url"):
+                continue
+            linkedin_listings.append(dict(
+                job_title=job.get("title", title),
+                company=job.get("company", ""),
+                location=job.get("location", loc),
+                job_type=_jtype(job.get("workplaceType", "")),
+                experience_required="",
+                skills_required=top_skills or ["Communication"],
+                description=(
+                    f"{job.get('title', title)} at {job.get('company', '')}. "
+                    f"{job.get('location', loc)}."
+                    + (" Easy Apply." if job.get("isEasyApply") else "")
+                    + f" Posted {job.get('postedTimeAgo', 'recently')}."
+                ),
+                salary_range=job.get("salary") or "",
+                source="LinkedIn",
+                posted_days_ago=days,
+                # Real job-specific URL — not a search query
+                apply_url=job["url"],
+            ))
+
+        linkedin_listings.sort(key=lambda j: j["posted_days_ago"])
+        logger.info("LinkedIn scraper returned %d jobs", len(linkedin_listings))
+    except Exception as exc:
+        logger.warning("LinkedIn scraping failed: %s", exc)
+
+    # ── 2. Portal search cards for Naukri / Indeed / Monster / Shine ──────────
+    # Each card's apply_url is a skill+role filtered search on that portal,
+    # so clicking always lands on jobs relevant to the user — never wrong results.
+    skills_preview = ", ".join(top_skills) if top_skills else title
+    portal_cards = []
+    for source, portal_name in [
+        ("Naukri",  "Naukri Career Portal"),
+        ("Indeed",  "Indeed India"),
+        ("Monster", "Monster India"),
+        ("Shine",   "Shine.com"),
+    ]:
+        portal_cards.append(dict(
+            job_title=f"{title} Jobs — Live Search",
+            company=portal_name,
+            location=loc,
+            job_type="Full-time",
+            experience_required="",
+            skills_required=skill_list[:5],
+            description=(
+                f"Click to browse the latest {title} openings matching your skills "
+                f"({skills_preview}) on {portal_name}. Results are filtered by role and skills."
+            ),
+            salary_range="",
+            source=source,
+            posted_days_ago=1,
+            apply_url=_skill_search_url(source, title, loc, skill_list),
+        ))
+
+    # If LinkedIn returned real results, combine and return
+    if linkedin_listings:
+        return dict(listings=linkedin_listings[:10] + portal_cards, **global_links)
+
+    # ── 3. Fallback: AI or deterministic listings with skill-enriched URLs ────
+    logger.info("LinkedIn returned 0 results; using AI/deterministic fallback")
+
+    fallback_companies = [
+        "Google India", "Microsoft India", "Amazon India", "Flipkart",
+        "Razorpay", "Swiggy", "Zerodha", "PhonePe", "Freshworks", "CRED",
+        "Meesho", "Infosys",
+    ]
+    job_types = ["Full-time", "Hybrid", "Remote", "Full-time", "Hybrid"]
+    salary_bands = ["₹10-18 LPA", "₹15-25 LPA", "₹20-35 LPA", "₹25-45 LPA", "₹30-50 LPA"]
+    exp_bands = ["1-3 years", "2-5 years", "3-6 years", "4-8 years", "5-10 years"]
+
     if not client.available():
-        fallback_companies = [
-            ("Google", 4.4), ("Microsoft", 4.2), ("Amazon", 3.9), ("Flipkart", 3.8),
-            ("Razorpay", 4.0), ("Swiggy", 3.7), ("Zerodha", 4.3), ("PhonePe", 4.0),
-            ("Infosys", 3.6), ("TCS", 3.7), ("Wipro", 3.5), ("Freshworks", 4.1),
-            ("CRED", 4.2), ("Meesho", 3.9), ("Ola", 3.6),
-        ]
-        job_types = ["Full-time", "Hybrid", "Remote", "Full-time", "Hybrid"]
-        salary_bands = ["₹10-18 LPA", "₹15-25 LPA", "₹20-35 LPA", "₹25-45 LPA", "₹30-50 LPA"]
-        exp_bands = ["1-3 years", "2-5 years", "3-6 years", "4-8 years", "5-10 years"]
         listings = []
-        for i, (company, _) in enumerate(fallback_companies[:12]):
-            src = sources[i % len(sources)]
+        for i, company in enumerate(fallback_companies[:10]):
             jtype = job_types[i % len(job_types)]
             listings.append(dict(
                 job_title=title,
@@ -590,52 +697,42 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
                 experience_required=exp_bands[i % len(exp_bands)],
                 skills_required=skill_list[:5] or ["Communication", "Problem Solving"],
                 description=(
-                    f"We are looking for a {title} to join {company}. "
-                    f"You will work on challenging projects and collaborate with top engineers. "
-                    f"Strong knowledge of {', '.join(skill_list[:3]) if skill_list else 'relevant technologies'} required."
+                    f"{title} opening at {company}. "
+                    f"Skills required: {', '.join(skill_list[:3]) if skill_list else 'relevant technologies'}. "
+                    f"Click to view matching jobs on the portal."
                 ),
                 salary_range=salary_bands[i % len(salary_bands)],
-                source=src,
+                source="LinkedIn",
                 posted_days_ago=(i % 10) + 1,
-                apply_url=apply_url(src, company, title, "Remote" if jtype == "Remote" else loc),
+                # Skill-enriched LinkedIn search — always relevant
+                apply_url=_skill_search_url("LinkedIn", title, loc, skill_list),
             ))
-        return dict(listings=listings, **global_links)
+        return dict(listings=listings + portal_cards, **global_links)
 
     skills_str = ", ".join(skill_list[:8]) if skill_list else "general technical skills"
     system = (
-        "You are a senior recruiter with deep knowledge of the Indian tech job market. "
-        "Generate realistic, detailed job postings that reflect current market conditions."
+        "You are a senior recruiter with deep knowledge of the Indian job market. "
+        "Generate realistic job postings. Do NOT invent apply URLs — leave apply_url as empty string."
     )
     prompt = (
-        f"Generate 12 realistic job listings for a candidate with the following profile:\n"
-        f"- Target role: {title}\n"
-        f"- Location preference: {loc}\n"
+        f"Generate 10 realistic job listings for:\n"
+        f"- Role: {title}\n"
+        f"- Location: {loc}\n"
         f"- Skills: {skills_str}\n\n"
-        "Mix sources across LinkedIn, Naukri, Indeed, Monster, Shine.\n"
-        "Include a variety of: Full-time, Remote, Hybrid, Contract roles.\n"
-        "Use real Indian tech companies (Flipkart, Razorpay, Swiggy, Zerodha, PhonePe, CRED, Meesho, "
-        "Freshworks, Infosys, TCS, Wipro, HCL, Google India, Microsoft India, Amazon India, etc.).\n"
-        "Salary ranges should reflect current Indian market (₹LPA format).\n\n"
-        "Return ONLY a JSON object:\n"
-        '{"listings": [{"job_title":"...","company":"...","location":"...","job_type":"Full-time|Remote|Hybrid|Contract",'
-        '"experience_required":"X-Y years","skills_required":["skill1","skill2",...],'
-        '"description":"2-3 sentence job description","salary_range":"₹X-Y LPA",'
-        f'"source":"LinkedIn|Naukri|Indeed|Monster|Shine","posted_days_ago":1,'
-        '"apply_url":"<correct search url for that source>"}], '
-        f'"linkedin_job_url":"{global_links["linkedin_job_url"]}",'
-        f'"naukri_job_url":"{global_links["naukri_job_url"]}",'
-        f'"indeed_job_url":"{global_links["indeed_job_url"]}",'
-        f'"monster_url":"{global_links["monster_url"]}",'
-        f'"shine_url":"{global_links["shine_url"]}",'
-        f'"remote_jobs_url":"{global_links["remote_jobs_url"]}"}}'
+        "Use only LinkedIn as source. Use real Indian companies.\n"
+        "Salary in ₹LPA format. Set apply_url to empty string ''.\n\n"
+        'Return ONLY JSON: {"listings": [{"job_title":"","company":"","location":"","job_type":"","'
+        '"experience_required":"","skills_required":[],"description":"","salary_range":"","source":"LinkedIn","posted_days_ago":1,"apply_url":""}]}'
     )
     try:
-        result = client.complete_json(prompt, system=system, max_tokens=4000)
-        if "listings" not in result:
-            raise ValueError("missing listings key")
-        return result
+        result = client.complete_json(prompt, system=system, max_tokens=3000)
+        ai_listings = result.get("listings", [])
+        # Replace every apply_url with a skill-enriched LinkedIn search
+        for item in ai_listings:
+            item["apply_url"] = _skill_search_url("LinkedIn", title, loc, skill_list)
+        return dict(listings=ai_listings[:10] + portal_cards, **global_links)
     except Exception:
-        return suggest_job_listings(None, target_role=title, location=loc, skills=skill_list)
+        return dict(listings=portal_cards, **global_links)
 
 
 # ---------------- Professional writeup ----------------

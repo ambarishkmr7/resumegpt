@@ -63,9 +63,16 @@ function JobCard({ job }) {
   const daysAgo = job.posted_days_ago === 1 ? "Today" :
     job.posted_days_ago <= 7 ? `${job.posted_days_ago}d ago` :
     `${Math.floor(job.posted_days_ago / 7)}w ago`;
+  // Portal search cards show a search page, not a single job — detect by title suffix
+  const isSearchCard = job.job_title.endsWith("— Live Search");
 
   return (
-    <div className="job-card">
+    <div className="job-card" style={isSearchCard ? { background: "#fffdf8", borderStyle: "dashed" } : {}}>
+      {isSearchCard && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#b45309", marginBottom: 8, letterSpacing: 0.4 }}>
+          🔍 JOB SEARCH PORTAL
+        </div>
+      )}
       {/* ── header row ── */}
       <div className="jc-header">
         {/* company logo placeholder */}
@@ -115,7 +122,7 @@ function JobCard({ job }) {
         </button>
       )}
 
-      {/* ── apply button ── */}
+      {/* ── apply / search button ── */}
       <div className="jc-footer">
         <a
           href={job.apply_url}
@@ -124,7 +131,7 @@ function JobCard({ job }) {
           className="jc-apply-btn"
           style={{ background: src.bg }}
         >
-          Apply on {job.source} →
+          {isSearchCard ? `🔍 Search Jobs on ${job.source} →` : `Apply on ${job.source} →`}
         </a>
       </div>
     </div>
