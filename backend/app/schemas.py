@@ -377,6 +377,9 @@ class JobListingsResponse(BaseModel):
     monster_url: str = ""
     shine_url: str = ""
     remote_jobs_url: str = ""
+    remote_com_url: str = ""
+    crossover_url: str = ""
+    remote_co_url: str = ""
 
 
 class WriteupRequest(BaseModel):

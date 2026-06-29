@@ -42,7 +42,7 @@ def _anthropic(prompt: str, system: str, max_tokens: int) -> str:
         "content-type": "application/json",
     }
     body = {
-        "model": settings.AI_MODEL or "gemini-flash-lite-latest",
+        "model": settings.AI_MODEL if (settings.AI_MODEL or "").startswith("claude") else "claude-sonnet-4-20250514",
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }

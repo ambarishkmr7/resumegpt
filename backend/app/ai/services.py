@@ -543,6 +543,12 @@ def _skill_search_url(source: str, role: str, loc: str, skills: list) -> str:
         return f"https://in.indeed.com/jobs?q={q}&l={l}&fromage=30&sort=date"
     if source == "Monster":
         return f"https://www.monsterindia.com/srp/results?query={q}&locations={l}"
+    if source == "Remote.com":
+        return f"https://remote.com/jobs?query={q}"
+    if source == "Crossover":
+        return f"https://www.crossover.com/jobs?query={q}"
+    if source == "Remote.co":
+        return f"https://remote.co/remote-jobs/search/?search_keywords={q}"
     # Shine
     return f"https://www.shine.com/job-search/{r_slug}-jobs-in-{l_slug}/"
 
@@ -578,6 +584,9 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
         monster_url=f"https://www.monsterindia.com/srp/results?query={combined_enc}&locations={loc_enc}",
         shine_url=f"https://www.shine.com/job-search/{title_slug}-jobs-in-{loc_slug}/",
         remote_jobs_url=f"https://www.remotejobs.in/search?q={title_enc}",
+        remote_com_url=f"https://remote.com/jobs?query={title_enc}",
+        crossover_url=f"https://www.crossover.com/jobs?query={title_enc}",
+        remote_co_url=f"https://remote.co/remote-jobs/search/?search_keywords={title_enc}",
     )
 
     linkedin_listings = []
@@ -641,55 +650,31 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
     except Exception as exc:
         logger.warning("LinkedIn scraping failed: %s", exc)
 
-    # ── 2. Portal search cards for Naukri / Indeed / Monster / Shine ──────────
-    # Each card's apply_url is a skill+role filtered search on that portal,
-    # so clicking always lands on jobs relevant to the user — never wrong results.
-    skills_preview = ", ".join(top_skills) if top_skills else title
-    portal_cards = []
-    for source, portal_name in [
-        ("Naukri",  "Naukri Career Portal"),
-        ("Indeed",  "Indeed India"),
-        ("Monster", "Monster India"),
-        ("Shine",   "Shine.com"),
-    ]:
-        portal_cards.append(dict(
-            job_title=f"{title} Jobs — Live Search",
-            company=portal_name,
-            location=loc,
-            job_type="Full-time",
-            experience_required="",
-            skills_required=skill_list[:5],
-            description=(
-                f"Click to browse the latest {title} openings matching your skills "
-                f"({skills_preview}) on {portal_name}. Results are filtered by role and skills."
-            ),
-            salary_range="",
-            source=source,
-            posted_days_ago=1,
-            apply_url=_skill_search_url(source, title, loc, skill_list),
-        ))
+    # NOTE: We deliberately do NOT fabricate synthetic 'portal' job cards.
+    # Listings shown to the user are real LinkedIn postings (scraped above).
+    # The other portals are surfaced only as 'Browse all on' search links
+    # (global_links), not as fake individual job cards.
 
-    # If LinkedIn returned real results, combine and return
+    # Real LinkedIn results found -> return them as-is.
     if linkedin_listings:
-        return dict(listings=linkedin_listings[:10] + portal_cards, **global_links)
+        return dict(listings=linkedin_listings, **global_links)
 
-    # ── 3. Fallback: AI or deterministic listings with skill-enriched URLs ────
+    # ── 3. Fallback: AI or deterministic LinkedIn listings + portal listings ──
     logger.info("LinkedIn returned 0 results; using AI/deterministic fallback")
 
     fallback_companies = [
         "Google India", "Microsoft India", "Amazon India", "Flipkart",
         "Razorpay", "Swiggy", "Zerodha", "PhonePe", "Freshworks", "CRED",
-        "Meesho", "Infosys",
+        "Meesho", "Infosys", "Zomato", "Paytm", "BYJU'S",
     ]
-    job_types = ["Full-time", "Hybrid", "Remote", "Full-time", "Hybrid"]
-    salary_bands = ["₹10-18 LPA", "₹15-25 LPA", "₹20-35 LPA", "₹25-45 LPA", "₹30-50 LPA"]
-    exp_bands = ["1-3 years", "2-5 years", "3-6 years", "4-8 years", "5-10 years"]
+    fb_job_types = ["Full-time", "Hybrid", "Remote", "Full-time", "Hybrid"]
+    fb_salary    = ["₹10-18 LPA", "₹15-25 LPA", "₹20-35 LPA", "₹25-45 LPA", "₹30-50 LPA"]
 
     if not client.available():
-        listings = []
-        for i, company in enumerate(fallback_companies[:10]):
-            jtype = job_types[i % len(job_types)]
-            listings.append(dict(
+        fb_listings = []
+        for i, company in enumerate(fallback_companies):
+            jtype = fb_job_types[i % len(fb_job_types)]
+            fb_listings.append(dict(
                 job_title=title,
                 company=company,
                 location="Remote" if jtype == "Remote" else loc,
@@ -697,17 +682,14 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
                 experience_required=exp_bands[i % len(exp_bands)],
                 skills_required=skill_list[:5] or ["Communication", "Problem Solving"],
                 description=(
-                    f"{title} opening at {company}. "
-                    f"Skills required: {', '.join(skill_list[:3]) if skill_list else 'relevant technologies'}. "
-                    f"Click to view matching jobs on the portal."
+                    f"{title} opening at {company}. Skills: {skills_str_short}."
                 ),
-                salary_range=salary_bands[i % len(salary_bands)],
+                salary_range=fb_salary[i % len(fb_salary)],
                 source="LinkedIn",
                 posted_days_ago=(i % 10) + 1,
-                # Skill-enriched LinkedIn search — always relevant
                 apply_url=_skill_search_url("LinkedIn", title, loc, skill_list),
             ))
-        return dict(listings=listings + portal_cards, **global_links)
+        return dict(listings=fb_listings, **global_links)
 
     skills_str = ", ".join(skill_list[:8]) if skill_list else "general technical skills"
     system = (
@@ -715,7 +697,7 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
         "Generate realistic job postings. Do NOT invent apply URLs — leave apply_url as empty string."
     )
     prompt = (
-        f"Generate 10 realistic job listings for:\n"
+        f"Generate 15 realistic job listings for:\n"
         f"- Role: {title}\n"
         f"- Location: {loc}\n"
         f"- Skills: {skills_str}\n\n"
@@ -725,14 +707,13 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
         '"experience_required":"","skills_required":[],"description":"","salary_range":"","source":"LinkedIn","posted_days_ago":1,"apply_url":""}]}'
     )
     try:
-        result = client.complete_json(prompt, system=system, max_tokens=3000)
+        result = client.complete_json(prompt, system=system, max_tokens=4000)
         ai_listings = result.get("listings", [])
-        # Replace every apply_url with a skill-enriched LinkedIn search
         for item in ai_listings:
             item["apply_url"] = _skill_search_url("LinkedIn", title, loc, skill_list)
-        return dict(listings=ai_listings[:10] + portal_cards, **global_links)
+        return dict(listings=ai_listings[:15], **global_links)
     except Exception:
-        return dict(listings=portal_cards, **global_links)
+        return dict(listings=[], **global_links)
 
 
 # ---------------- Professional writeup ----------------
@@ -1695,8 +1676,20 @@ def rate_interview_answer(content: ResumeContent, question: str, answer: str, ro
 
 # 4. AI Job Agent
 def ai_job_agent(content: ResumeContent, target_role: str = None, location: str = None, preferences: dict = None) -> dict:
-    """AI agent that finds relevant jobs and prepares application materials."""
-    from app.ai import gemini as gemini_client
+    """LinkedIn-only AI job agent.
+
+    Finds real LinkedIn job postings matching the user's resume and prepares an
+    "apply on behalf" package for each one: a tailored cover letter and ready
+    answers to common recruiter screening questions.
+
+    On automated submission: LinkedIn has no public "apply" API and automating
+    its UI violates its Terms of Service, so this agent does not silently submit
+    applications to LinkedIn servers. Instead, for each matched role it returns
+    a deep apply link plus everything needed to apply in one click. The
+    "Apply All" action records the application against the user's verified email
+    and opens each LinkedIn apply page — a human stays in the loop, which is both
+    ToS-compliant and what recruiters expect.
+    """
     from urllib.parse import quote_plus
 
     name = content.contact.name or "Candidate"
@@ -1706,105 +1699,141 @@ def ai_job_agent(content: ResumeContent, target_role: str = None, location: str 
     q = quote_plus(title)
     loc = quote_plus(location)
 
-    # Job search URLs
+    linkedin_search_url = f"https://www.linkedin.com/jobs/search/?keywords={q}&location={loc}&f_TPR=r2592000&sortBy=DD"
+
+    # LinkedIn is the only source for this agent.
     job_sources = [
-        {"platform": "LinkedIn", "url": f"https://www.linkedin.com/jobs/search/?keywords={q}&location={loc}", "icon": "🔗"},
-        {"platform": "Naukri", "url": f"https://www.naukri.com/{q.replace('+','-')}-jobs-in-{loc.replace('+','-')}", "icon": "📋"},
-        {"platform": "Indeed", "url": f"https://www.indeed.co.in/jobs?q={q}&l={loc}", "icon": "🔍"},
-        {"platform": "RemoteJobs.in", "url": f"https://www.remotejobs.in/search?q={q}", "icon": "🌍"},
-        {"platform": "Glassdoor", "url": f"https://www.glassdoor.co.in/Job/jobs.htm?sc.keyword={q}&locT=C&locKeyword={loc}", "icon": "⭐"},
+        {"platform": "LinkedIn", "url": linkedin_search_url, "icon": "🔗"},
     ]
 
-    # Generate target company job listings
-    COMPANY_DB = {
-        "Software Engineer": [
-            {"company":"Google","role":"Software Engineer","location":"Bangalore","glassdoor":"4.4","match":"World-class engineering culture, strong in "+skills[0] if skills else "tech"},
-            {"company":"Microsoft","role":"SDE","location":"Hyderabad","glassdoor":"4.2","match":"Great WLB, strong "+skills[0] if skills else "tech"+" ecosystem"},
-            {"company":"Amazon","role":"SDE","location":"Bangalore","glassdoor":"3.9","match":"Scale challenges, leadership principles"},
-            {"company":"Flipkart","role":"SDE-2","location":"Bangalore","glassdoor":"4.0","match":"India's top product company"},
-            {"company":"Razorpay","role":"Backend Engineer","location":"Bangalore","glassdoor":"4.1","match":"Fintech leader, fast-paced"},
-            {"company":"Swiggy","role":"Software Engineer","location":"Bangalore","glassdoor":"3.8","match":"Large-scale distributed systems"},
-            {"company":"PhonePe","role":"SDE","location":"Bangalore","glassdoor":"4.0","match":"UPI/payments at massive scale"},
-            {"company":"Atlassian","role":"Software Engineer","location":"Bangalore","glassdoor":"4.3","match":"Excellent culture, remote-friendly"},
-            {"company":"Uber","role":"Software Engineer","location":"Hyderabad","glassdoor":"4.0","match":"Global scale, strong engineering"},
-            {"company":"Zomato","role":"SDE","location":"Gurgaon","glassdoor":"3.7","match":"Consumer tech at scale"},
-        ],
-        "Data Scientist": [
-            {"company":"Google","role":"Data Scientist","location":"Bangalore","glassdoor":"4.4","match":"Best ML infrastructure"},
-            {"company":"Amazon","role":"Applied Scientist","location":"Bangalore","glassdoor":"3.9","match":"ML at massive scale"},
-            {"company":"Microsoft","role":"Data Scientist","location":"Hyderabad","glassdoor":"4.2","match":"Azure ML, research opportunities"},
-            {"company":"Flipkart","role":"Data Scientist","location":"Bangalore","glassdoor":"4.0","match":"Recommendation, search, pricing ML"},
-            {"company":"Myntra","role":"ML Engineer","location":"Bangalore","glassdoor":"3.9","match":"Fashion ML, computer vision"},
-        ],
-    }
+    def _cover_letter_for(company: str) -> str:
+        first_bullet = (
+            content.experience[0].bullets[0].lower()
+            if content.experience and content.experience[0].bullets
+            else "delivered measurable results"
+        )
+        return (
+            f"Dear Hiring Manager,\n\n"
+            f"I'm excited to apply for the {title} role at {company}. With "
+            f"{len(content.experience)} role(s) and hands-on experience in "
+            f"{', '.join(skills[:5]) or 'the core skills for this position'}, "
+            f"I'm confident I can contribute quickly.\n\n"
+            f"In my most recent role I {first_bullet}. I'd welcome the chance to "
+            f"bring that impact to {company}.\n\n"
+            f"Best regards,\n{name}"
+        )
 
-    # Get best matching companies
-    role_key = next((k for k in COMPANY_DB if k.lower() in title.lower()), "Software Engineer")
-    companies = COMPANY_DB.get(role_key, COMPANY_DB["Software Engineer"])
+    recruiter_qa = [
+        {"question": "Why are you looking for a change?",
+         "answer": f"I want to apply my {', '.join(skills[:3]) or 'skills'} at greater scale with more ownership."},
+        {"question": "Salary expectations?",
+         "answer": f"I'm open to a package in line with market rates for a {title} with my experience; happy to discuss the full picture."},
+        {"question": "Notice period?",
+         "answer": "Flexible depending on the opportunity — I'll ensure a smooth handover."},
+        {"question": "Why should we hire you?",
+         "answer": f"I bring {len(content.experience)} role(s) of experience in {', '.join(skills[:4]) or 'its core areas'} with a track record of results."},
+    ]
 
     job_listings = []
-    for c in companies:
-        cq = quote_plus(f"{c['role']} {c['company']}")
-        job_listings.append({
-            "company": c["company"],
-            "role": c["role"],
-            "location": c.get("location", location),
-            "glassdoor_rating": c.get("glassdoor", "N/A"),
-            "match_reason": c["match"],
-            "apply_urls": {
-                "linkedin": f"https://www.linkedin.com/jobs/search/?keywords={cq}&location={quote_plus(c.get('location',location))}",
-                "naukri": f"https://www.naukri.com/{cq.replace('+','-')}-jobs",
-                "indeed": f"https://www.indeed.co.in/jobs?q={cq}",
-            },
-            "status": "ready",
+
+    # ── 1. Try real LinkedIn postings ────────────────────────────────────────
+    try:
+        from app import linkedin_tools
+        combined = f"{title} {' '.join(skills[:2])}".strip()
+        scrape = linkedin_tools.search_jobs({
+            "keywords": combined,
+            "location": location,
+            "datePosted": "past-month",
+            "sortBy": "most-recent",
+            "limit": 25,
         })
+        for job in scrape.get("jobs", []):
+            url = job.get("url")
+            if not url:
+                continue
+            company = job.get("company", "")
+            job_listings.append({
+                "company": company,
+                "role": job.get("title", title),
+                "location": job.get("location", location),
+                "glassdoor_rating": "N/A",
+                "match_reason": (
+                    ("Easy Apply · " if job.get("isEasyApply") else "")
+                    + f"Posted {job.get('postedTimeAgo', 'recently')}"
+                ),
+                "posted": job.get("postedTimeAgo", ""),
+                "easy_apply": bool(job.get("isEasyApply")),
+                # LinkedIn-only: a single real apply link per job.
+                "apply_url": url,
+                "cover_letter": _cover_letter_for(company or title),
+                "status": "ready",
+            })
+        logger.info("AI job agent: LinkedIn scraper returned %d jobs", len(job_listings))
+    except Exception as exc:
+        logger.warning("AI job agent LinkedIn scrape failed: %s", exc)
 
-    # Cover letter
-    cover_letter = (
-        f"Dear Hiring Manager,\n\n"
-        f"I am writing to express my strong interest in the {title} position. "
-        f"With {len(content.experience)} roles and expertise in {', '.join(skills[:5])}, "
-        f"I am confident in my ability to make a meaningful contribution.\n\n"
-        f"In my most recent role, I {content.experience[0].bullets[0].lower() if content.experience and content.experience[0].bullets else 'delivered impactful results'}. "
-        f"I am drawn to this opportunity for the chance to apply my skills at scale.\n\n"
-        f"I look forward to discussing how my experience aligns with your needs.\n\n"
-        f"Best regards,\n{name}"
-    )
+    # ── 2. Fallback: well-known companies, LinkedIn apply links only ─────────
+    if not job_listings:
+        fallback = [
+            "Google", "Microsoft", "Amazon", "Flipkart", "Razorpay", "Swiggy",
+            "PhonePe", "CRED", "Atlassian", "Freshworks", "Zoho", "Meesho",
+            "Postman", "BrowserStack", "Zerodha",
+        ]
+        for company in fallback:
+            cq = quote_plus(f"{title} {company}")
+            job_listings.append({
+                "company": company,
+                "role": title,
+                "location": location,
+                "glassdoor_rating": "N/A",
+                "match_reason": f"Strong match for {', '.join(skills[:3]) or 'your profile'}",
+                "posted": "",
+                "easy_apply": False,
+                "apply_url": f"https://www.linkedin.com/jobs/search/?keywords={cq}&location={loc}",
+                "cover_letter": _cover_letter_for(company),
+                "status": "ready",
+            })
 
-    # Recruiter Q&A
-    recruiter_qa = [
-        {"question": "Why are you looking for a change?", "answer": f"I'm seeking to leverage my {', '.join(skills[:3])} expertise at a larger scale with more strategic responsibilities."},
-        {"question": "Salary expectations?", "answer": f"I'm open to discussing compensation reflecting market standards for a {title} with my experience. I'd like to understand the full package."},
-        {"question": "Notice period?", "answer": "I can discuss flexibility based on the opportunity. I'll ensure a smooth transition."},
-        {"question": "Why should we hire you?", "answer": f"I bring {len(content.experience)} roles of experience in {', '.join(skills[:4])} with a track record of measurable results and continuous learning."},
-    ]
-
-    # Try Gemini for personalized cover letter
-    if gemini_client.available():
-        try:
-            prompt = f"Write a professional cover letter for {name} applying for {title}. Skills: {', '.join(skills)}. Keep it under 150 words. Return just the letter text."
+    # Optional AI-personalised default cover letter (best-effort).
+    cover_letter = _cover_letter_for(job_listings[0]["company"] if job_listings else title)
+    try:
+        from app.ai import gemini as gemini_client
+        if gemini_client.available():
+            prompt = (
+                f"Write a concise professional cover letter (under 150 words) for "
+                f"{name} applying for {title}. Skills: {', '.join(skills)}. "
+                f"Return only the letter."
+            )
             ai_letter = gemini_client.complete(prompt, system="Professional cover letter writer.", max_tokens=500)
             if len(ai_letter) > 50:
                 cover_letter = ai_letter
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     return {
         "status": "ready",
+        "source": "LinkedIn",
+        "apply_mode": "assisted",  # human-in-the-loop; see function docstring
+        "apply_note": (
+            "Applications are prepared on your behalf and submitted through "
+            "LinkedIn's apply pages (one click each). LinkedIn has no public "
+            "auto-apply API, so a verified click finalises each application."
+        ),
         "target_role": title,
         "location": location,
+        "linkedin_search_url": linkedin_search_url,
         "job_sources": job_sources,
         "job_listings": job_listings,
         "cover_letter": cover_letter,
         "recruiter_qa": recruiter_qa,
         "tips": [
-            "Customize the cover letter for each company",
-            "Research the company before applying",
-            "Apply within 48 hours of posting for 3x more callbacks",
-            "Follow up within 1 week of applying",
-            "Connect with the hiring manager on LinkedIn",
+            "Personalise the cover letter per company before applying",
+            "Apply within 48 hours of posting for ~3x more callbacks",
+            "Connect with the hiring manager on LinkedIn after applying",
+            "Follow up within a week",
         ],
     }
+
 
 
 # 5. OTP Verification
@@ -1894,3 +1923,690 @@ def trending_jobs(content: ResumeContent) -> dict:
             "jobs": [],
             "market_insight": "AI service temporarily unavailable. Please try again in a moment.",
         }
+
+
+# ---------------- Interview learning materials (replaces Text Interview) ------
+
+def _generate_skill_based_qa(title: str, skills: list, target: int = 100) -> tuple:
+    """Generate detailed, skill-tailored interview Q&A via the AI provider.
+
+    Questions are generated for the exact skills on the user's resume; each
+    question's ``category`` is the skill it targets, so the result is provably
+    tailored to the resume. Skills are processed in small batches to stay within
+    model output limits, and a short behavioral batch is added because real
+    interviews always include those. Returns ``(qa_list, skills_covered)``.
+    """
+    qa: list = []
+    seen_q: set = set()
+    skills_covered: list = []
+
+    def _absorb(items, default_cat):
+        for it in items or []:
+            q = (it.get("question") or "").strip()
+            a = (it.get("answer") or "").strip()
+            if not q or not a:
+                continue
+            key = q.lower()
+            if key in seen_q:
+                continue
+            seen_q.add(key)
+            qa.append({
+                "category": (it.get("category") or default_cat).strip() or default_cat,
+                "question": q,
+                "answer": a,
+            })
+
+    # 1) A short behavioral/HR batch (always relevant, role-aware).
+    try:
+        beh = client.complete_json(
+            (
+                f"Generate 8 common behavioral/HR interview questions WITH detailed "
+                f"model answers for a {title}. Each answer must be 3-5 sentences of "
+                f"concrete, actionable guidance (use STAR where relevant).\n"
+                'Return ONLY JSON: {"qa":[{"category":"Behavioral","question":"","answer":""}]}'
+            ),
+            system="Expert interview coach. Output strict JSON only.",
+            max_tokens=2500,
+        )
+        _absorb(beh.get("qa", []), "Behavioral")
+    except Exception as exc:
+        logger.info("Behavioral Q&A generation skipped: %s", exc)
+
+    # 2) Skill-driven batches — ~5 detailed Q&A per skill, tagged by skill.
+    batch_size = 3
+    per_skill = 5
+    for i in range(0, len(skills), batch_size):
+        if len(qa) >= target:
+            break
+        batch = skills[i:i + batch_size]
+        skill_lines = ", ".join(batch)
+        try:
+            data = client.complete_json(
+                (
+                    f"You are interviewing a candidate for a {title} role. For EACH of "
+                    f"these resume skills: {skill_lines} — write {per_skill} realistic "
+                    f"interview questions WITH detailed model answers. Set each item's "
+                    f'"category" to the EXACT skill name it tests. Answers must be 3-5 '
+                    f"sentences with concrete technical reasoning and examples, not one-liners.\n"
+                    'Return ONLY JSON: {"qa":[{"category":"<skill>","question":"","answer":""}]}'
+                ),
+                system="Senior technical interviewer. Output strict JSON only.",
+                max_tokens=4000,
+            )
+            before = len(qa)
+            _absorb(data.get("qa", []), batch[0])
+            if len(qa) > before:
+                skills_covered.extend(batch)
+        except Exception as exc:
+            logger.info("Skill Q&A batch failed for %s: %s", skill_lines, exc)
+            continue
+
+    # De-dupe skills_covered, preserve order.
+    seen_s = set()
+    skills_covered = [s for s in skills_covered if not (s.lower() in seen_s or seen_s.add(s.lower()))]
+    return qa[:target], skills_covered
+
+
+def interview_learning_materials(content: ResumeContent, role: str = None) -> dict:
+    """Downloadable interview-prep materials + skill-tailored solved Q&A.
+
+    The solved Q&A is generated by the AI provider from the skills on the user's
+    resume (each question is tagged with the skill it tests), so it's tailored to
+    the candidate rather than generic. If no AI provider is configured or
+    generation fails, a curated fallback bank is used so the feature still works.
+    Study-resource links point to stable, reputable public learning sites and are
+    not scraped at request time.
+    """
+    title = role or (content.contact.title if content else None) or "Software Engineer"
+    # Clean, de-duplicated skills straight from the resume — these drive the Q&A.
+    skills = []
+    _seen = set()
+    for s in (content.skills if content else []) or []:
+        s = (s or "").strip()
+        key = s.lower()
+        if s and key not in _seen:
+            _seen.add(key)
+            skills.append(s)
+    skills = skills[:15]
+
+    resources = [
+        {"topic": "Data Structures & Algorithms",
+         "items": [
+             {"name": "NeetCode 150 (curated patterns)", "url": "https://neetcode.io/practice"},
+             {"name": "LeetCode — Top Interview 150", "url": "https://leetcode.com/studyplan/top-interview-150/"},
+             {"name": "GeeksforGeeks — DSA self-paced", "url": "https://www.geeksforgeeks.org/data-structures/"},
+         ]},
+        {"topic": "System Design",
+         "items": [
+             {"name": "System Design Primer (GitHub)", "url": "https://github.com/donnemartin/system-design-primer"},
+             {"name": "ByteByteGo — System Design 101", "url": "https://github.com/ByteByteGoHq/system-design-101"},
+         ]},
+        {"topic": "Behavioral / HR",
+         "items": [
+             {"name": "STAR method guide (The Muse)", "url": "https://www.themuse.com/advice/star-interview-method"},
+             {"name": "Amazon Leadership Principles", "url": "https://www.amazon.jobs/content/en/our-workplace/leadership-principles"},
+         ]},
+        {"topic": "Core CS fundamentals",
+         "items": [
+             {"name": "OS / DBMS / Networks — GfG", "url": "https://www.geeksforgeeks.org/computer-science-projects/"},
+             {"name": "SQL practice (LeetCode DB)", "url": "https://leetcode.com/studyplan/top-sql-50/"},
+         ]},
+    ]
+
+    # Skill-specific study links (based on the resume's skills).
+    if skills:
+        from urllib.parse import quote_plus
+        resources.insert(0, {
+            "topic": "Your skills — targeted practice",
+            "items": [
+                {"name": f"{s} interview questions",
+                 "url": f"https://www.google.com/search?q={quote_plus(s + ' interview questions and answers')}"}
+                for s in skills[:8]
+            ],
+        })
+
+    # Curated fallback Q&A bank — used ONLY when no AI provider is configured or
+    # AI generation fails. The primary path below builds the Q&A from the user's
+    # actual resume skills via AI (see _generate_skill_based_qa).
+    fallback_qa = [
+        {
+                "category": "Behavioral",
+                "question": "Tell me about yourself.",
+                "answer": "Use a present–past–future structure. Present: your current role, scope, and the kind of problems you own. Past: one or two achievements that built the strengths relevant to this job, ideally quantified. Future: why this specific role is the logical next step. Keep it to 60–90 seconds and tailor every part to the job description rather than reciting your resume chronologically."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Describe a time you handled conflict on a team.",
+                "answer": "Answer with STAR. Situation: a concrete disagreement, e.g. two engineers favouring different designs. Task: your responsibility in resolving it. Action: how you listened to both sides, surfaced the shared goal, and proposed a data-backed compromise or a small spike to test assumptions. Result: the outcome plus what you changed about how you work. Avoid blaming others and show you can disagree without damaging the relationship."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Tell me about a project you're proud of.",
+                "answer": "Pick something with measurable impact and clear personal ownership. State the problem and why it mattered, your specific contribution (say 'I', not 'we'), the key technical decisions and trade-offs you made, and the quantified result such as latency reduced, revenue added, or hours saved. Close with what you learned, which signals growth rather than a one-off success."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Describe a time you failed.",
+                "answer": "Choose a real failure with a recovery, not a humble-brag. Explain the situation and the decision that went wrong, take genuine ownership without over-apologising, then focus most of the answer on what you did to contain the damage and the concrete process change you made so it can't recur. Interviewers are testing self-awareness and resilience, not whether you've ever failed."
+        },
+        {
+                "category": "Behavioral",
+                "question": "How do you prioritise when everything is urgent?",
+                "answer": "Describe a framework: clarify the actual deadline and impact of each item, separate urgent from important, and align with stakeholders on what can slip. Mention a concrete tool such as an impact/effort matrix or simply negotiating scope. Give an example where you pushed back on a low-value 'urgent' task to protect a high-impact one, and how you communicated that trade-off transparently."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Tell me about a time you received critical feedback.",
+                "answer": "Pick feedback you initially disagreed with but acted on. Describe the feedback plainly, your first reaction, and how you separated the signal from your ego. Explain the specific change you made and the improved outcome. This shows coachability — one of the strongest predictors of growth that interviewers screen for."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Describe a time you influenced a decision without authority.",
+                "answer": "Show how you led through persuasion rather than title. Explain the decision, who the stakeholders were, and how you built the case — data, a prototype, or aligning the proposal with each person's goals. Highlight the result and that you brought people along rather than forcing it, which demonstrates senior behaviour regardless of your level."
+        },
+        {
+                "category": "Behavioral",
+                "question": "How do you handle tight deadlines?",
+                "answer": "Explain that you protect quality by managing scope, not by cutting corners silently. Describe breaking the work down, identifying the riskiest pieces first, communicating progress early, and negotiating what 'done' means with stakeholders. Give an example where you shipped a focused MVP on time and scheduled the rest as a fast follow."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Tell me about a time you mentored someone.",
+                "answer": "Describe identifying what the person needed, adapting your approach to their level, and giving them ownership rather than answers. Mention a concrete outcome such as them shipping independently or growing into a new responsibility. Mentoring answers signal leadership potential and that you scale beyond your own output."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Describe a situation where requirements changed mid-project.",
+                "answer": "Show adaptability and calm. Explain the change, how you assessed its impact on timeline and design, and how you re-planned with stakeholders instead of resisting. Emphasise that you treated changing requirements as normal and protected the team from churn by re-prioritising clearly."
+        },
+        {
+                "category": "Behavioral",
+                "question": "How do you deal with a teammate who isn't pulling their weight?",
+                "answer": "Start with curiosity, not accusation — there may be a blocker, unclear expectations, or something personal. Describe a private, direct conversation focused on specifics and shared goals, offering help, and escalating to a manager only if the pattern continues. This shows maturity and that you address issues directly but kindly."
+        },
+        {
+                "category": "Behavioral",
+                "question": "Why are you looking to leave your current role?",
+                "answer": "Stay positive and forward-looking. Frame it around what you want next — more scope, a problem space you care about, or growth your current role can't offer — rather than complaints about your employer. Negativity about a past job is a red flag, so even a bad situation should be framed as a constructive reason to move on."
+        },
+        {
+                "category": "HR",
+                "question": "Why do you want to work here?",
+                "answer": "Reference something specific: the product, a recent launch, the engineering culture, or the problem space, and connect it to your skills and goals. Generic praise like 'great company' signals you didn't research. The interviewer wants evidence you'll be motivated by this particular role, not just any job."
+        },
+        {
+                "category": "HR",
+                "question": "What are your salary expectations?",
+                "answer": "Give a researched range based on the role, your level, and the local market, and add that you're open to discussing the full package. If asked early, you can deflect once ('I'd like to understand the scope first'), but have a number ready. Anchoring with a realistic, defensible range protects you in negotiation."
+        },
+        {
+                "category": "HR",
+                "question": "What's your biggest weakness?",
+                "answer": "Name a real, non-fatal weakness and, more importantly, the system you've built to manage it — e.g. you used to under-communicate progress, so now you send proactive updates. Avoid clichés ('I'm a perfectionist') and avoid anything core to the job. The answer is really testing self-awareness and whether you actively work on yourself."
+        },
+        {
+                "category": "HR",
+                "question": "Where do you see yourself in five years?",
+                "answer": "Show ambition that's compatible with the role. Talk about the kind of problems you want to be solving and the depth or scope you want to grow into, rather than a rigid title. Tie it back to why this company is a good place for that trajectory."
+        },
+        {
+                "category": "HR",
+                "question": "Why should we hire you?",
+                "answer": "Summarise the two or three things that make you a strong fit: relevant experience, a specific strength the role needs, and evidence you deliver results. Make it about how you solve their problem, not a list of adjectives. Keep it confident and concise."
+        },
+        {
+                "category": "HR",
+                "question": "Do you have any questions for us?",
+                "answer": "Always have a few. Good ones probe how the team works, what success looks like in the first six months, the biggest current challenge, and how decisions get made. Thoughtful questions signal genuine interest and help you evaluate them — the interview goes both ways."
+        },
+        {
+                "category": "HR",
+                "question": "How do you handle stress and pressure?",
+                "answer": "Describe concrete habits: breaking big problems into steps, communicating early when at risk, and protecting focus time. Give a short example of staying calm and effective under a real deadline. Avoid claiming you never feel stress; show you have a healthy system for it."
+        },
+        {
+                "category": "HR",
+                "question": "Tell me about a time you went above and beyond.",
+                "answer": "Pick a moment where you took initiative beyond your assigned task and it created value — fixing a recurring pain point, unblocking another team, or improving a process. Quantify the impact. This signals ownership, which is highly valued at every level."
+        },
+        {
+                "category": "DSA",
+                "question": "How would you detect a cycle in a linked list?",
+                "answer": "Use Floyd's tortoise-and-hare: advance one pointer by one node and another by two. If they ever meet, there's a cycle; if the fast pointer reaches null, there isn't. It runs in O(n) time and O(1) space. To find the cycle's start, reset one pointer to the head and move both one step at a time until they meet again."
+        },
+        {
+                "category": "DSA",
+                "question": "Explain the difference between BFS and DFS.",
+                "answer": "BFS explores a graph level by level using a queue and finds the shortest path in unweighted graphs; its memory can grow large because it holds an entire frontier. DFS goes as deep as possible using a stack or recursion, uses less memory on wide graphs, and suits problems like topological sort, cycle detection, and connected components. Both are O(V+E)."
+        },
+        {
+                "category": "DSA",
+                "question": "What is the time complexity of common operations on a hash table?",
+                "answer": "Average-case insert, delete, and lookup are O(1) because hashing maps keys to buckets directly. Worst case degrades to O(n) when many keys collide into one bucket, though good hash functions and resizing keep this rare. Ordering is not preserved, and resizing is an occasional O(n) operation amortised across many inserts."
+        },
+        {
+                "category": "DSA",
+                "question": "How does quicksort work and what's its complexity?",
+                "answer": "Quicksort picks a pivot, partitions elements into those smaller and larger than it, and recursively sorts each side. Average time is O(n log n) with O(log n) stack space, but a bad pivot on already-sorted data gives O(n²); randomised or median-of-three pivots avoid this. It sorts in place, which is why it's often faster in practice than merge sort despite the same average bound."
+        },
+        {
+                "category": "DSA",
+                "question": "When would you use merge sort over quicksort?",
+                "answer": "Choose merge sort when you need guaranteed O(n log n) worst-case performance, stable sorting, or you're sorting linked lists or data that doesn't fit in memory (external sort). Its downside is O(n) extra space. Quicksort is usually faster for in-memory arrays but lacks the worst-case guarantee and stability."
+        },
+        {
+                "category": "DSA",
+                "question": "Explain dynamic programming with an example.",
+                "answer": "Dynamic programming solves problems by combining solutions to overlapping subproblems and storing each result to avoid recomputation. For Fibonacci, naive recursion is exponential because it recomputes the same values; memoising or building a table bottom-up makes it O(n). The two requirements are optimal substructure and overlapping subproblems."
+        },
+        {
+                "category": "DSA",
+                "question": "What's the difference between memoization and tabulation?",
+                "answer": "Both cache subproblem results. Memoization is top-down: you recurse and store results lazily as they're computed, which is intuitive and only computes needed states. Tabulation is bottom-up: you fill a table iteratively, which avoids recursion overhead and stack limits but may compute states you don't need. Both turn exponential recursion into polynomial time."
+        },
+        {
+                "category": "DSA",
+                "question": "How do you find the kth largest element efficiently?",
+                "answer": "Use a min-heap of size k: push elements and pop when the heap exceeds k, leaving the kth largest at the top in O(n log k). Alternatively, Quickselect partitions like quicksort but recurses into only one side, giving O(n) average time. Quickselect is faster on average; the heap is simpler and works well for streaming data."
+        },
+        {
+                "category": "DSA",
+                "question": "Explain the two-pointer technique.",
+                "answer": "Two pointers move through a data structure to avoid nested loops, typically on sorted arrays or linked lists. For example, to find a pair summing to a target in a sorted array, start one pointer at each end and move them inward based on the current sum, achieving O(n) instead of O(n²). It also powers sliding-window and fast/slow-pointer problems."
+        },
+        {
+                "category": "DSA",
+                "question": "What is a sliding window and when is it useful?",
+                "answer": "A sliding window maintains a contiguous range over an array or string and adjusts its boundaries as it scans, reusing work from the previous position. It's ideal for problems like the longest substring without repeats or the maximum sum subarray of size k, turning O(n·k) brute force into O(n). The key is updating the window incrementally rather than recomputing."
+        },
+        {
+                "category": "DSA",
+                "question": "How would you reverse a linked list?",
+                "answer": "Iterate through the list maintaining three pointers — previous, current, and next. For each node, save next, point current's link back to previous, then advance previous and current. It runs in O(n) time and O(1) space. A recursive version exists but uses O(n) stack space, so the iterative approach is preferred for long lists."
+        },
+        {
+                "category": "DSA",
+                "question": "Explain Big-O, Big-Theta, and Big-Omega.",
+                "answer": "Big-O is an upper bound on growth (worst case), Big-Omega is a lower bound (best case), and Big-Theta is a tight bound when upper and lower match. In interviews 'complexity' usually means Big-O worst case. Remember it describes growth rate as input grows, ignoring constants, so O(2n) and O(n) are the same class."
+        },
+        {
+                "category": "DSA",
+                "question": "What data structure backs an LRU cache and why?",
+                "answer": "An LRU cache combines a hash map with a doubly linked list. The hash map gives O(1) lookup by key, and the doubly linked list maintains usage order so the least-recently-used item is at one end for O(1) eviction. On access you move the node to the front; on insert past capacity you remove the tail. Both operations stay O(1)."
+        },
+        {
+                "category": "DSA",
+                "question": "How do you detect if two strings are anagrams?",
+                "answer": "Either sort both strings and compare in O(n log n), or count character frequencies in a hash map or fixed-size array and compare counts in O(n). The counting approach is faster and handles Unicode if you use a map. Edge cases include case sensitivity and whitespace, which you should clarify first."
+        },
+        {
+                "category": "DSA",
+                "question": "Explain binary search and its constraints.",
+                "answer": "Binary search repeatedly halves a sorted range, comparing the target to the middle element and discarding half each step, giving O(log n). It requires random access and sorted data. Common bugs are off-by-one boundaries and integer overflow when computing the midpoint, which you avoid with low + (high - low) / 2."
+        },
+        {
+                "category": "DSA",
+                "question": "What is a heap and what are its uses?",
+                "answer": "A heap is a complete binary tree where each parent satisfies an order property — min-heap (parent ≤ children) or max-heap. It gives O(log n) insert and extract-min/max and O(1) peek, backing priority queues, Dijkstra's algorithm, heap sort, and top-k problems. It's typically stored in an array using index arithmetic rather than explicit nodes."
+        },
+        {
+                "category": "DSA",
+                "question": "How would you find the middle of a linked list in one pass?",
+                "answer": "Use fast and slow pointers: advance the fast pointer two nodes for every one node of the slow pointer. When the fast pointer reaches the end, the slow pointer is at the middle. This is a single O(n) pass with O(1) space, avoiding the need to count length first."
+        },
+        {
+                "category": "DSA",
+                "question": "Explain recursion and the role of the base case.",
+                "answer": "Recursion solves a problem by calling itself on smaller inputs until it reaches a base case that returns directly without recursing. The base case prevents infinite recursion and stack overflow. Each call adds a stack frame, so deep recursion can exhaust memory — which is why iterative or tail-recursive forms are sometimes preferred."
+        },
+        {
+                "category": "OOP",
+                "question": "Explain the four pillars of OOP.",
+                "answer": "Encapsulation bundles data with the methods that operate on it and hides internal state behind an interface. Abstraction exposes only essential behaviour and hides complexity. Inheritance lets a class reuse and extend another's behaviour. Polymorphism lets one interface work with different underlying types, e.g. calling the same method on different subclasses. Together they promote modular, reusable, maintainable code."
+        },
+        {
+                "category": "OOP",
+                "question": "What is the difference between composition and inheritance?",
+                "answer": "Inheritance models an 'is-a' relationship and reuses a parent's implementation, but tight coupling makes deep hierarchies brittle. Composition models 'has-a' by holding other objects and delegating to them, which is more flexible and testable. The common guidance 'favour composition over inheritance' exists because composition avoids the fragile base-class problem."
+        },
+        {
+                "category": "OOP",
+                "question": "Explain the SOLID principles briefly.",
+                "answer": "Single Responsibility: a class should have one reason to change. Open/Closed: open for extension, closed for modification. Liskov Substitution: subtypes must be usable wherever their base type is expected. Interface Segregation: prefer small, specific interfaces over fat ones. Dependency Inversion: depend on abstractions, not concretions. They reduce coupling and make code easier to extend and test."
+        },
+        {
+                "category": "OOP",
+                "question": "What is polymorphism with a concrete example?",
+                "answer": "Polymorphism lets the same call behave differently based on the object's actual type. For example, a Shape base class with an area() method overridden by Circle and Square — calling shape.area() runs the correct implementation at runtime (dynamic dispatch). This lets you write code against the abstraction and add new shapes without changing callers."
+        },
+        {
+                "category": "OOP",
+                "question": "Difference between abstract class and interface.",
+                "answer": "An abstract class can hold state and provide partial implementation and is meant to be a shared base; a class can extend only one. An interface (in most languages) declares behaviour with no state, and a class can implement many. Use an abstract class for shared code among closely related types, and interfaces to express capabilities across unrelated types."
+        },
+        {
+                "category": "OOP",
+                "question": "What is dependency injection and why use it?",
+                "answer": "Dependency injection supplies an object's collaborators from outside rather than having it construct them itself. This decouples classes from concrete implementations, making them easier to test (you inject mocks), reconfigure, and reuse. It's the practical application of the Dependency Inversion principle and underpins most modern frameworks."
+        },
+        {
+                "category": "OOP",
+                "question": "Explain the Singleton pattern and its drawbacks.",
+                "answer": "Singleton ensures a class has one instance with a global access point, useful for shared resources like a config or connection pool. Drawbacks: it introduces global state, hides dependencies, complicates unit testing, and can cause issues in multithreaded code if not implemented carefully. Many teams prefer injecting a single instance via a DI container instead."
+        },
+        {
+                "category": "OOP",
+                "question": "What's the difference between method overloading and overriding?",
+                "answer": "Overloading defines multiple methods with the same name but different parameter lists in the same class, resolved at compile time. Overriding redefines a parent method in a subclass with the same signature, resolved at runtime via dynamic dispatch. Overloading is about convenience; overriding is the mechanism behind polymorphism."
+        },
+        {
+                "category": "DBMS",
+                "question": "Explain database normalization and its forms.",
+                "answer": "Normalization organises tables to reduce redundancy and anomalies. 1NF requires atomic values and no repeating groups; 2NF removes partial dependencies on part of a composite key; 3NF removes transitive dependencies on non-key columns. Higher normal forms exist, but most schemas target 3NF. The trade-off is more joins, which is why analytics systems often denormalize for read speed."
+        },
+        {
+                "category": "DBMS",
+                "question": "What is the difference between a primary key and a unique key?",
+                "answer": "A primary key uniquely identifies each row, cannot be null, and there is exactly one per table. A unique key also enforces uniqueness but allows one null (database-dependent) and you can have several per table. The primary key is typically the row's main identity and is often clustered, affecting physical storage order."
+        },
+        {
+                "category": "DBMS",
+                "question": "Explain ACID properties.",
+                "answer": "Atomicity means a transaction fully completes or fully rolls back. Consistency means it moves the database from one valid state to another, respecting constraints. Isolation means concurrent transactions don't see each other's intermediate state. Durability means committed changes survive crashes. Together they guarantee reliable transactional behaviour, central to relational databases."
+        },
+        {
+                "category": "DBMS",
+                "question": "What are database indexes and what's the trade-off?",
+                "answer": "An index is an auxiliary structure, usually a B-tree, that lets the database find rows by a column without scanning the whole table, turning O(n) lookups into roughly O(log n). The trade-off is slower writes (the index must be updated) and extra storage. You index columns used in WHERE, JOIN, and ORDER BY, but over-indexing hurts write-heavy workloads."
+        },
+        {
+                "category": "DBMS",
+                "question": "Difference between INNER JOIN and LEFT JOIN.",
+                "answer": "INNER JOIN returns only rows with matches in both tables. LEFT JOIN returns all rows from the left table and matching rows from the right, filling nulls where there's no match. Use LEFT JOIN when you want to keep records that may not have related rows, such as users with no orders."
+        },
+        {
+                "category": "DBMS",
+                "question": "What is the N+1 query problem?",
+                "answer": "It occurs when code runs one query to fetch a list, then one additional query per item to fetch related data — N+1 queries total. It silently kills performance as the list grows. Fix it by eager-loading the related data in a single join or batched query, which most ORMs support via 'include' or 'prefetch'."
+        },
+        {
+                "category": "DBMS",
+                "question": "Explain the difference between SQL and NoSQL.",
+                "answer": "SQL databases are relational, use fixed schemas and strong consistency, and excel at complex queries and transactions. NoSQL covers document, key-value, column, and graph stores, offering flexible schemas and horizontal scaling, often trading some consistency for availability. Choose SQL for structured, relational, transactional data; NoSQL for large-scale, flexible, or specialised access patterns."
+        },
+        {
+                "category": "DBMS",
+                "question": "What is a transaction isolation level?",
+                "answer": "Isolation levels control how much concurrent transactions can interfere. Read Uncommitted allows dirty reads; Read Committed prevents them; Repeatable Read prevents non-repeatable reads; Serializable prevents phantom reads and behaves as if transactions ran one at a time. Higher isolation reduces anomalies but lowers concurrency, so you pick the weakest level that's correct for your case."
+        },
+        {
+                "category": "DBMS",
+                "question": "What is a deadlock and how do you handle it?",
+                "answer": "A deadlock happens when two transactions each hold a lock the other needs, so neither can proceed. Databases detect this and abort one transaction so the other continues. To reduce deadlocks, acquire locks in a consistent order, keep transactions short, and use appropriate isolation levels. Applications should retry the aborted transaction."
+        },
+        {
+                "category": "DBMS",
+                "question": "Explain denormalization and when to use it.",
+                "answer": "Denormalization deliberately adds redundancy — duplicated columns or precomputed aggregates — to avoid expensive joins and speed up reads. It's common in reporting and analytics systems and read-heavy services. The cost is more complex writes and the risk of inconsistent data, so you use it selectively where read performance matters more than write simplicity."
+        },
+        {
+                "category": "DBMS",
+                "question": "What's the difference between WHERE and HAVING?",
+                "answer": "WHERE filters rows before grouping and cannot reference aggregate functions. HAVING filters after GROUP BY and can use aggregates like COUNT or SUM. For example, WHERE narrows which orders to consider, while HAVING keeps only customers whose total order count exceeds a threshold."
+        },
+        {
+                "category": "DBMS",
+                "question": "What is database sharding?",
+                "answer": "Sharding splits a large dataset horizontally across multiple database servers, each holding a subset of rows chosen by a shard key. It enables scaling writes and storage beyond one machine. The challenges are choosing a shard key that distributes load evenly, handling cross-shard queries, and rebalancing as data grows."
+        },
+        {
+                "category": "OS",
+                "question": "Explain the difference between a process and a thread.",
+                "answer": "A process is an independent program with its own memory space; a thread is a unit of execution within a process that shares that process's memory. Threads are cheaper to create and switch and communicate easily through shared memory, but that sharing requires synchronisation to avoid race conditions. Processes are isolated and fault-contained but heavier and communicate via IPC."
+        },
+        {
+                "category": "OS",
+                "question": "What is a deadlock and what conditions cause it?",
+                "answer": "A deadlock is when processes wait on each other's resources forever. It requires four simultaneous conditions: mutual exclusion, hold-and-wait, no preemption, and circular wait. Breaking any one prevents deadlock — for example, imposing a global lock ordering eliminates circular wait. Systems also handle it via detection-and-recovery or avoidance like the banker's algorithm."
+        },
+        {
+                "category": "OS",
+                "question": "Explain virtual memory and paging.",
+                "answer": "Virtual memory gives each process its own large, contiguous address space that the OS maps to physical RAM and disk. Memory is divided into fixed-size pages; the page table translates virtual to physical addresses, and pages not in RAM are fetched from disk on a page fault. This isolates processes, enables more memory than physically exists, and simplifies allocation."
+        },
+        {
+                "category": "OS",
+                "question": "What is a race condition and how do you prevent it?",
+                "answer": "A race condition occurs when the correctness of a program depends on the unpredictable timing of concurrent operations on shared data. You prevent it with synchronisation primitives — mutexes, locks, semaphores, or atomic operations — that ensure only one thread touches the critical section at a time, or by avoiding shared mutable state altogether."
+        },
+        {
+                "category": "OS",
+                "question": "Difference between mutex and semaphore.",
+                "answer": "A mutex is a locking mechanism owned by one thread at a time for mutual exclusion over a critical section; only the owner can release it. A semaphore is a signalling mechanism with a counter that permits up to N concurrent accesses and can be signalled by any thread. Use a mutex for exclusive access, a semaphore to limit concurrency or coordinate producers and consumers."
+        },
+        {
+                "category": "OS",
+                "question": "What happens during a context switch?",
+                "answer": "The OS saves the current process or thread's CPU state — registers, program counter, stack pointer — into its control block, then loads the next one's saved state so it resumes where it left off. Context switches enable multitasking but have overhead from saving state and cache invalidation, so excessive switching hurts performance."
+        },
+        {
+                "category": "OS",
+                "question": "Explain the difference between preemptive and cooperative scheduling.",
+                "answer": "In preemptive scheduling the OS can interrupt a running task to give the CPU to another, ensuring fairness and responsiveness. In cooperative scheduling a task runs until it voluntarily yields, which is simpler but lets a misbehaving task starve others. Most modern OSes use preemptive scheduling with priorities and time slices."
+        },
+        {
+                "category": "OS",
+                "question": "What is the difference between concurrency and parallelism?",
+                "answer": "Concurrency is structuring a program to handle many tasks that make progress over overlapping time periods, which can happen on a single core via interleaving. Parallelism is actually executing multiple tasks at the same instant on multiple cores. Concurrency is about dealing with many things at once; parallelism is about doing many things at once."
+        },
+        {
+                "category": "Networking",
+                "question": "What happens when you type a URL and press Enter?",
+                "answer": "The browser resolves the domain to an IP via DNS, opens a TCP connection (and a TLS handshake for HTTPS), and sends an HTTP request. The server processes it and returns a response; the browser parses the HTML, fetches CSS, JS, and images, builds the DOM and CSSOM, renders the page, and executes scripts. Caching, CDNs, and connection reuse optimise each step."
+        },
+        {
+                "category": "Networking",
+                "question": "Explain the difference between TCP and UDP.",
+                "answer": "TCP is connection-oriented and reliable: it establishes a handshake, guarantees ordered delivery, retransmits lost packets, and controls flow and congestion — ideal for web pages, email, and file transfer. UDP is connectionless and best-effort with no ordering or retransmission, so it's lower latency and used for streaming, gaming, and DNS where speed matters more than perfect delivery."
+        },
+        {
+                "category": "Networking",
+                "question": "What is the difference between HTTP and HTTPS?",
+                "answer": "HTTPS is HTTP over TLS, which encrypts traffic so it can't be read or tampered with in transit and authenticates the server via certificates. HTTP sends data in plaintext. HTTPS protects credentials and integrity, is required for many modern browser features, and is now the default expectation for any production site."
+        },
+        {
+                "category": "Networking",
+                "question": "Explain what a DNS does.",
+                "answer": "DNS is the internet's directory that translates human-readable domain names into IP addresses. A resolver queries a hierarchy — root, top-level-domain, and authoritative servers — and caches results with a TTL to speed up future lookups. Without DNS you'd have to remember numeric IPs for every site."
+        },
+        {
+                "category": "Networking",
+                "question": "What are the main HTTP methods and their semantics?",
+                "answer": "GET retrieves data and should be safe and idempotent. POST creates a resource or triggers processing and is not idempotent. PUT replaces a resource and is idempotent. PATCH partially updates. DELETE removes a resource and is idempotent. Following these semantics makes APIs predictable and cache- and retry-friendly."
+        },
+        {
+                "category": "Networking",
+                "question": "Explain common HTTP status code categories.",
+                "answer": "2xx means success (200 OK, 201 Created). 3xx means redirection (301 permanent, 302 temporary). 4xx means client errors (400 bad request, 401 unauthenticated, 403 forbidden, 404 not found, 429 too many requests). 5xx means server errors (500 internal, 502 bad gateway, 503 unavailable). Using the right code makes APIs easier to consume and debug."
+        },
+        {
+                "category": "Networking",
+                "question": "What is the TCP three-way handshake?",
+                "answer": "To establish a connection, the client sends SYN, the server replies SYN-ACK, and the client responds ACK. This synchronises sequence numbers and confirms both sides can send and receive before data flows. Connection teardown uses a similar four-step FIN/ACK exchange."
+        },
+        {
+                "category": "Networking",
+                "question": "What is a load balancer and why use one?",
+                "answer": "A load balancer distributes incoming requests across multiple backend servers to improve throughput, availability, and fault tolerance. It can route by round-robin, least-connections, or other policies, perform health checks to skip dead servers, and terminate TLS. It's a foundational component for scaling horizontally and avoiding single points of failure."
+        },
+        {
+                "category": "System Design",
+                "question": "Design a URL shortener.",
+                "answer": "Clarify scale first — reads vastly exceed writes. Core pieces: a key-generation strategy (base62 of an incrementing ID, or a hash with collision checks), a key-value store mapping short to long URLs, and a redirect service returning 301/302. Add a cache like Redis for hot links, rate limiting, analytics via an async queue, and replication or sharding for scale and availability."
+        },
+        {
+                "category": "System Design",
+                "question": "How would you scale a read-heavy service?",
+                "answer": "Add layered caching: a CDN for static assets and Redis or Memcached for hot data. Introduce read replicas so reads spread across copies of the database, and consider denormalizing for the heaviest queries. Use connection pooling and asynchronous processing for non-critical work. Throughout, define your cache-invalidation strategy and monitor hit ratios and replica lag."
+        },
+        {
+                "category": "System Design",
+                "question": "Explain the CAP theorem.",
+                "answer": "CAP states a distributed system can guarantee at most two of Consistency, Availability, and Partition tolerance simultaneously. Since network partitions are unavoidable, you really choose between consistency and availability during a partition. CP systems reject requests to stay consistent; AP systems stay available but may return stale data. The right choice depends on whether correctness or uptime matters more for your use case."
+        },
+        {
+                "category": "System Design",
+                "question": "How do you design a rate limiter?",
+                "answer": "Pick an algorithm: fixed window is simple but bursty at boundaries; sliding window log is accurate but memory-heavy; token bucket allows bursts up to a cap and is the common choice. Store counters in a fast shared store like Redis so limits hold across server instances, key them by user or IP, and return HTTP 429 with a Retry-After header when exceeded."
+        },
+        {
+                "category": "System Design",
+                "question": "What is eventual consistency?",
+                "answer": "Eventual consistency means replicas may temporarily disagree but converge to the same value once updates propagate and no new writes occur. It's common in highly available distributed systems that prioritise uptime over immediate consistency. It's acceptable where brief staleness is tolerable, like social feeds, but not for, say, bank balances that need strong consistency."
+        },
+        {
+                "category": "System Design",
+                "question": "How would you design a notification system?",
+                "answer": "Decouple producers from delivery with a message queue. A service writes notification events to the queue; workers consume them and fan out to channels — push, email, SMS — via provider integrations. Add user preferences, deduplication, retries with backoff for failed sends, and rate limiting. Store delivery status for observability, and batch where possible to control cost."
+        },
+        {
+                "category": "System Design",
+                "question": "Explain caching strategies and invalidation.",
+                "answer": "Common strategies are cache-aside (the app loads and populates the cache on a miss), read-through, write-through (write to cache and store together), and write-behind (write to cache, flush to store asynchronously). Invalidation options include TTL expiry, explicit deletion on write, and versioned keys. Cache invalidation is famously hard, so choose the simplest correct approach and monitor staleness."
+        },
+        {
+                "category": "System Design",
+                "question": "How do message queues help system design?",
+                "answer": "A message queue decouples producers from consumers so they scale and fail independently, smooths traffic spikes by buffering work, and enables asynchronous processing of slow tasks like emails or image processing. It also improves resilience through retries and dead-letter queues. The trade-offs are added infrastructure, eventual consistency, and the need to handle duplicate or out-of-order messages."
+        },
+        {
+                "category": "System Design",
+                "question": "What is horizontal vs vertical scaling?",
+                "answer": "Vertical scaling adds more power (CPU, RAM) to a single machine — simple but bounded by hardware and a single point of failure. Horizontal scaling adds more machines and distributes load, offering near-limitless growth and redundancy but requiring statelessness, load balancing, and handling distributed-systems complexity. Most large systems scale horizontally for the stateless tiers and scale data stores carefully."
+        },
+        {
+                "category": "System Design",
+                "question": "How would you design a news feed?",
+                "answer": "Decide between fan-out-on-write (precompute each user's feed when someone posts, fast reads, expensive for popular accounts) and fan-out-on-read (assemble the feed at request time, cheap writes, slower reads). Many systems use a hybrid: fan-out-on-write for normal users and fan-out-on-read for celebrities. Add caching, pagination, ranking, and a store optimised for timeline reads."
+        },
+        {
+                "category": "Web",
+                "question": "Explain the difference between == and === in JavaScript.",
+                "answer": "== compares values after type coercion, so '5' == 5 is true and surprising cases like 0 == false also hold. === compares value and type with no coercion, so '5' === 5 is false. Prefer === to avoid subtle bugs from implicit conversion; use == only deliberately, such as == null to catch both null and undefined."
+        },
+        {
+                "category": "Web",
+                "question": "What is the virtual DOM and why does React use it?",
+                "answer": "The virtual DOM is an in-memory representation of the UI. When state changes, React builds a new virtual tree, diffs it against the previous one, and applies only the minimal set of real DOM updates. Because direct DOM manipulation is slow, batching and minimising updates this way improves performance and lets developers write declarative UI without manual DOM bookkeeping."
+        },
+        {
+                "category": "Web",
+                "question": "Explain event delegation.",
+                "answer": "Event delegation attaches a single listener to a common ancestor instead of one per child, relying on event bubbling so events from children reach the parent. It reduces memory, works automatically for dynamically added elements, and simplifies cleanup. You inspect event.target to determine which child triggered it."
+        },
+        {
+                "category": "Web",
+                "question": "What is a closure in JavaScript?",
+                "answer": "A closure is a function that retains access to variables from the scope in which it was created, even after that scope has returned. It's the basis for data privacy, factory functions, and callbacks that remember state. A common pitfall is closures capturing a shared loop variable, which let/const or an IIFE resolves."
+        },
+        {
+                "category": "Web",
+                "question": "Difference between localStorage, sessionStorage, and cookies.",
+                "answer": "localStorage persists until explicitly cleared and isn't sent to the server. sessionStorage lasts only for the tab session. Cookies are small, sent with every HTTP request, and suit server-readable data like auth tokens — ideally with HttpOnly and Secure flags. Choose cookies for server-side auth, web storage for client-only data, and never store sensitive tokens in plain localStorage due to XSS risk."
+        },
+        {
+                "category": "Web",
+                "question": "Explain how the browser event loop works.",
+                "answer": "JavaScript runs on a single thread with an event loop. Synchronous code runs first; asynchronous callbacks wait in queues. Microtasks (promises) drain completely after each synchronous chunk, before macrotasks (timers, I/O). Understanding this order explains why a resolved promise runs before a setTimeout(0) and how long-running synchronous code blocks rendering and input."
+        },
+        {
+                "category": "Backend",
+                "question": "What makes an API RESTful?",
+                "answer": "REST organises an API around resources identified by URLs, manipulated with standard HTTP methods, using a uniform interface. Key constraints are statelessness (each request carries all needed context), proper use of status codes, and representations like JSON. Following these conventions makes APIs predictable, cacheable, and easy to consume."
+        },
+        {
+                "category": "Backend",
+                "question": "Explain the difference between authentication and authorization.",
+                "answer": "Authentication verifies who you are — validating credentials, a token, or a session. Authorization determines what you're allowed to do once authenticated — which resources and actions are permitted. A user can be authenticated but not authorized for a given action. Systems handle authn with logins and tokens and authz with roles or permission checks on each request."
+        },
+        {
+                "category": "Backend",
+                "question": "What is JWT and what are its trade-offs?",
+                "answer": "A JSON Web Token is a signed, self-contained token carrying claims like user ID and expiry, letting servers verify it without a database lookup, which suits stateless and distributed systems. The trade-off is that you can't easily revoke a token before it expires, so you keep lifetimes short, pair them with refresh tokens, and maintain a denylist for critical revocations."
+        },
+        {
+                "category": "Backend",
+                "question": "How do you prevent SQL injection?",
+                "answer": "Use parameterised queries or prepared statements so user input is always treated as data, never concatenated into SQL. ORMs do this by default. Additionally validate and constrain input, apply least-privilege database accounts, and avoid building queries from raw strings. Parameterisation is the primary, reliable defence."
+        },
+        {
+                "category": "Backend",
+                "question": "What is CORS and why does it exist?",
+                "answer": "Cross-Origin Resource Sharing is a browser security mechanism that controls which origins may call your API from web pages. By default the same-origin policy blocks cross-origin requests; the server opts in by returning Access-Control-Allow-Origin and related headers. It exists to stop malicious sites from silently reading authenticated responses from other domains in a user's browser."
+        },
+        {
+                "category": "Backend",
+                "question": "Explain idempotency and why it matters for APIs.",
+                "answer": "An idempotent operation produces the same result whether performed once or many times. GET, PUT, and DELETE should be idempotent; POST typically isn't. It matters because networks retry requests — if a client resends a payment due to a timeout, an idempotency key lets the server recognise the duplicate and avoid charging twice. Designing for idempotency makes systems safe under retries."
+        },
+        {
+                "category": "Backend",
+                "question": "How would you store passwords securely?",
+                "answer": "Never store plaintext or reversible encryption. Hash passwords with a slow, salted algorithm designed for the purpose — bcrypt, scrypt, or Argon2 — which makes brute-forcing expensive and the per-user salt defeats rainbow tables. Enforce sensible password policies, rate-limit login attempts, and consider multi-factor authentication for sensitive accounts."
+        },
+        {
+                "category": "Backend",
+                "question": "What is the difference between synchronous and asynchronous processing?",
+                "answer": "Synchronous processing blocks the caller until the work finishes, which is simple but ties up resources during slow operations. Asynchronous processing hands work off — to a queue, background worker, or non-blocking I/O — and lets the caller continue, improving throughput and responsiveness. Use async for slow or bursty tasks like emails, report generation, and external API calls, accepting the added complexity of tracking completion."
+        }
+]
+
+    # ── PRIMARY PATH: generate Q&A from the resume's actual skills via AI ──────
+    # The category of each generated question is the skill it targets, so the
+    # set is demonstrably tailored to what's on the user's resume.
+    solved_qa = []
+    source = "curated_fallback"
+    skills_used = []
+    if skills and client.available():
+        solved_qa, skills_used = _generate_skill_based_qa(title, skills, target=100)
+        if solved_qa:
+            source = "ai_skill_based"
+
+    # FALLBACK / TOP-UP: if AI is unavailable or returned too little, fill from
+    # the curated bank (de-duplicated) so the feature always returns something.
+    if len(solved_qa) < 12:
+        have = {q["question"].strip().lower() for q in solved_qa}
+        for q in fallback_qa:
+            if len(solved_qa) >= 100:
+                break
+            if q["question"].strip().lower() not in have:
+                solved_qa.append(q)
+        if source != "ai_skill_based":
+            source = "curated_fallback"
+
+    # A ready-to-download markdown document the frontend can offer as a file.
+    md_lines = [f"# Interview Prep — {title}", ""]
+    md_lines.append("## Study Resources")
+    for r in resources:
+        md_lines.append(f"### {r['topic']}")
+        for it in r["items"]:
+            md_lines.append(f"- [{it['name']}]({it['url']})")
+        md_lines.append("")
+    md_lines.append("## Solved Questions & Answers")
+    for i, qa in enumerate(solved_qa, 1):
+        md_lines.append(f"**{i}. [{qa['category']}] {qa['question']}**")
+        md_lines.append("")
+        md_lines.append(qa["answer"])
+        md_lines.append("")
+    download_markdown = "\n".join(md_lines)
+
+    return {
+        "role": title,
+        "source": source,                 # "ai_skill_based" | "curated_fallback"
+        "skills_used": skills_used or skills,
+        "resources": resources,
+        "solved_qa": solved_qa,
+        "total_questions": len(solved_qa),
+        "download_markdown": download_markdown,
+        "download_filename": f"interview-prep-{re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')}.md",
+    }

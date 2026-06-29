@@ -345,6 +345,9 @@ def job_listings(payload: JobListingsRequest, user: User = Depends(get_current_u
         monster_url=result.get("monster_url", ""),
         shine_url=result.get("shine_url", ""),
         remote_jobs_url=result.get("remote_jobs_url", ""),
+        remote_com_url=result.get("remote_com_url", ""),
+        crossover_url=result.get("crossover_url", ""),
+        remote_co_url=result.get("remote_co_url", ""),
     )
 
 
@@ -394,6 +397,13 @@ def rate_answer(payload: dict, user: User = Depends(get_current_user)):
     )
 
 
+@router.post("/interview-materials")
+def interview_materials(payload: dict, user: User = Depends(get_current_user)):
+    """Downloadable interview learning materials + solved Q&A (text-prep mode)."""
+    content = ResumeContent.model_validate(payload.get("content", {}))
+    return ai_services.interview_learning_materials(content, payload.get("role"))
+
+
 @router.post("/job-agent")
 def job_agent(payload: dict, user: User = Depends(get_current_user)):
     """AI job search agent."""
@@ -418,8 +428,11 @@ def send_otp(payload: dict, user: User = Depends(get_current_user), db: Session 
     db.add(record); db.commit()
 
     # In production: integrate SMS gateway (MSG91, Twilio, etc.)
-    # For now, return OTP in response (demo mode)
-    return {"message": f"OTP sent to {mobile}", "demo_otp": otp, "expires_in": 300}
+    # The OTP is only echoed back in non-production for testing.
+    resp = {"message": f"OTP sent to {mobile}", "expires_in": 300}
+    if not settings.is_production:
+        resp["demo_otp"] = otp
+    return resp
 
 
 @router.post("/verify-otp")
@@ -445,6 +458,63 @@ def verify_otp(payload: dict, user: User = Depends(get_current_user), db: Sessio
     record.verified = True
     db.commit()
     return {"verified": True, "mobile": mobile}
+
+
+@router.post("/send-email-otp")
+def send_email_otp(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Send a 6-digit OTP to the user's resume email for job-application verification."""
+    from datetime import datetime, timedelta
+    from app.models import OtpVerification
+    from app.email_service import send_otp_email
+
+    email = payload.get("email", "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email address required")
+
+    otp = ai_services.generate_otp()
+    expires = datetime.utcnow() + timedelta(minutes=5)
+
+    record = OtpVerification(user_id=user.id, mobile=email, otp_code=otp, expires_at=expires)
+    db.add(record)
+    db.commit()
+
+    try:
+        send_otp_email(email, otp, settings)
+    except Exception as e:
+        logger.error("Failed to send OTP email to %s: %s", email, e)
+        raise HTTPException(status_code=503, detail="Failed to send OTP email. Check SMTP settings in .env")
+
+    return {"message": f"OTP sent to {email}", "expires_in": 300}
+
+
+@router.post("/verify-email-otp")
+def verify_email_otp(payload: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Verify the email OTP and mark the record as used."""
+    from datetime import datetime
+    from app.models import OtpVerification
+
+    email = payload.get("email", "").strip().lower()
+    otp = payload.get("otp", "").strip()
+
+    record = (
+        db.query(OtpVerification)
+        .filter(
+            OtpVerification.user_id == user.id,
+            OtpVerification.mobile == email,
+            OtpVerification.otp_code == otp,
+            OtpVerification.verified == False,
+            OtpVerification.expires_at > datetime.utcnow(),
+        )
+        .order_by(OtpVerification.expires_at.desc())
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    record.verified = True
+    db.commit()
+    return {"verified": True, "email": email}
 
 
 @router.post("/photo")

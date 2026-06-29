@@ -152,6 +152,17 @@ def verify_payment(payload: VerifyPaymentRequest,
 @router.post("/checkout", response_model=SubscriptionStatus)
 def checkout(payload: CheckoutRequest,
              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # SECURITY: this endpoint grants a subscription WITHOUT verifying a real
+    # payment, so it is only allowed when Razorpay is NOT configured (local/demo
+    # mode). When live keys are present, callers must go through create-order +
+    # verify-payment (HMAC signature verified). Without this guard, any logged-in
+    # user could unlock Elite for free by calling /checkout directly.
+    if settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET:
+        logger.warning("Blocked /checkout bypass attempt by user %s (live Razorpay configured)", user.id)
+        raise HTTPException(
+            status_code=400,
+            detail="Use the verified payment flow (create-order then verify-payment).",
+        )
     payment = Payment(user_id=user.id, razorpay_payment_id=payload.payment_id,
                       plan="elite", amount=PLAN["display"], status="paid")
     db.add(payment)

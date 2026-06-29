@@ -3,12 +3,13 @@ import secrets
 import uuid as _uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.deps import get_current_user
+from app.core.rate_limit import limiter
 from app.core.security import (
     create_access_token,
     hash_password,
@@ -32,7 +33,8 @@ settings = get_settings()
 
 
 @router.post("/register", response_model=Token, status_code=201)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def register(request: Request, payload: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         logger.warning("Registration failed — email already registered: %s", payload.email)
@@ -51,7 +53,8 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     # OAuth2PasswordRequestForm uses 'username' field; we treat it as email.
     user = db.query(User).filter(User.email == form.username).first()
     if not user or not verify_password(form.password, user.hashed_password):
@@ -63,7 +66,8 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 
 
 @router.post("/login-json", response_model=Token)
-def login_json(payload: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login_json(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     """Alternative JSON-based login (same as /login but accepts JSON body)."""
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
@@ -84,26 +88,46 @@ def logout(user: User = Depends(get_current_user)):
 
 
 @router.post("/forgot-password")
-def forgot_password(payload: ForgotPassword, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+def forgot_password(request: Request, payload: ForgotPassword, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
-    # Always return 200 to avoid leaking which emails are registered.
-    if user:
-        token = secrets.token_urlsafe(32)
-        user.reset_token = token
-        user.reset_token_expires = datetime.utcnow() + timedelta(
-            minutes=settings.RESET_TOKEN_EXPIRE_MINUTES
-        )
-        db.commit()
-        logger.info("Password reset requested for: %s", user.email)
-        # TODO: send `token` via email (SendGrid/SES). For dev we return it.
-        reset_link = f"{settings.FRONTEND_ORIGIN}/reset-password?token={token}"
-        return {"detail": "If the email exists, a reset link was sent", "dev_reset_link": reset_link}
-    logger.info("Password reset requested for unknown email: %s", payload.email)
-    return {"detail": "If the email exists, a reset link was sent"}
+    # Always return the same response to avoid leaking which emails are registered.
+    generic = {"detail": "If the email exists, a reset link was sent"}
+    if not user:
+        logger.info("Password reset requested for unknown email: %s", payload.email)
+        return generic
+
+    token = secrets.token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expires = datetime.utcnow() + timedelta(
+        minutes=settings.RESET_TOKEN_EXPIRE_MINUTES
+    )
+    db.commit()
+    logger.info("Password reset requested for: %s", user.email)
+
+    reset_link = f"{settings.FRONTEND_ORIGIN}/reset-password?token={token}"
+
+    # Deliver the link by email. The raw link/token is NEVER returned in the
+    # API response in production — doing so would let anyone reset any account
+    # just by reading the response (account takeover).
+    emailed = False
+    try:
+        from app.email_service import send_reset_email
+        send_reset_email(user.email, reset_link, settings)
+        emailed = True
+    except Exception as e:
+        # Don't reveal email-existence via error; just log it.
+        logger.error("Failed to send reset email to %s: %s", user.email, e)
+
+    if not settings.is_production:
+        # Dev convenience only: surface the link so you can test without SMTP.
+        return {**generic, "emailed": emailed, "dev_reset_link": reset_link}
+    return generic
 
 
 @router.post("/reset-password")
-def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def reset_password(request: Request, payload: ResetPassword, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.reset_token == payload.token).first()
     if (
         not user
@@ -120,7 +144,8 @@ def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
 
 
 @router.post("/guest", response_model=Token, status_code=201)
-def guest_register(db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def guest_register(request: Request, db: Session = Depends(get_db)):
     """Create a temporary guest account for anonymous resume building.
     The guest can later claim the account by registering with a real email."""
     guest_uid = _uuid.uuid4().hex[:16]
@@ -179,7 +204,8 @@ def me(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/google", response_model=Token)
-def google_login(payload: dict, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def google_login(request: Request, payload: dict, db: Session = Depends(get_db)):
     """Login/register with Google. Frontend sends the Google ID token."""
     token = payload.get("credential") or payload.get("token")
     if not token:
@@ -229,7 +255,8 @@ def google_login(payload: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/facebook", response_model=Token)
-def facebook_login(payload: dict, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def facebook_login(request: Request, payload: dict, db: Session = Depends(get_db)):
     """Login/register with Facebook. Frontend sends the FB access token."""
     access_token = payload.get("accessToken") or payload.get("token")
     if not access_token:

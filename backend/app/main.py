@@ -1,25 +1,16 @@
 import os
+import logging
 
 APP_DIR = os.path.dirname(__file__)
-
-print("APP_DIR =", APP_DIR)
-print("APP CONTENTS =", os.listdir(APP_DIR))
-
-public_dir = os.path.join(APP_DIR, "public")
-
-print("PUBLIC EXISTS =", os.path.exists(public_dir))
-
-if os.path.exists(public_dir):
-    print("PUBLIC CONTENTS =", os.listdir(public_dir))
-
 FRONTEND_DIST = os.path.normpath(os.path.join(APP_DIR, "..", "..", "frontend", "dist"))
-
-import logging
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.core.rate_limit import limiter
 from contextlib import asynccontextmanager
 from app.auth.router import router as auth_router
 from app.config import get_settings
@@ -110,6 +101,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app = FastAPI(title="resumes-gpt API", version="1.0.0", lifespan=lifespan)
 
+# Rate limiting (slowapi) — limiter is shared with the auth router via app.core.rate_limit
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_ORIGIN, "http://localhost:3000", "http://localhost:5173"],
@@ -142,8 +137,9 @@ async def _spa_fallback(full_path: str):
     if not os.path.isdir(FRONTEND_DIST):
         raise HTTPException(status_code=404, detail="Frontend build not found. Run: cd frontend && npm run build")
     # Serve an exact file if it exists (JS, CSS, favicon, robots.txt, etc.)
-    candidate = os.path.join(FRONTEND_DIST, full_path)
-    if full_path and os.path.isfile(candidate):
+    candidate = os.path.normpath(os.path.join(FRONTEND_DIST, full_path))
+    # Guard against path traversal: candidate must stay inside FRONTEND_DIST.
+    if full_path and (candidate == FRONTEND_DIST or candidate.startswith(FRONTEND_DIST + os.sep)) and os.path.isfile(candidate):
         return FileResponse(candidate)
     # Everything else → index.html (React Router handles the URL client-side)
     index = os.path.join(FRONTEND_DIST, "index.html")
