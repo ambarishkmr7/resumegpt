@@ -424,7 +424,7 @@ export default function Editor() {
 
             {rightTab === "elite" && (
               isEliteUnlocked
-                ? <ElitePanel content={content} />
+                ? <ElitePanel content={content} resumeId={id} />
                 : (
                   <div style={{ padding: "40px 24px", textAlign: "center" }}>
                     <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>

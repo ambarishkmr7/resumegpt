@@ -8,6 +8,7 @@ import ResetPassword from "./pages/ResetPassword.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Editor from "./pages/Editor.jsx";
+import MockInterview from "./pages/MockInterview.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
 import CmsPage from "./pages/CmsPage.jsx";
 import BlogPage from "./pages/BlogPage.jsx";
@@ -84,6 +85,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="/editor/:id" element={<Protected><Editor /></Protected>} />
+      <Route path="/editor/:id/interview" element={<Protected><MockInterview /></Protected>} />
       <Route path="/admin" element={<AdminProtected><AdminPage /></AdminProtected>} />
       <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
       <Route path="/career" element={<Protected><CareerPage /></Protected>} />

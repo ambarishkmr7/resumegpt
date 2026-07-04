@@ -1,0 +1,477 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { api } from "../api/client.js";
+
+const MAX_SECONDS = 30 * 60; // hard ceiling, mirrors backend INTERVIEW_MAX_SECONDS
+const IN_RATE = 16000;       // mic capture + AudioContext rate (Gemini input)
+const OUT_RATE = 24000;      // Gemini output audio rate
+const MIC_FLUSH_SAMPLES = 1600; // ~100ms batches to Gemini
+
+// ---- audio helpers ----------------------------------------------------------
+
+function floatToPcm16Base64(float32) {
+  const pcm = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const bytes = new Uint8Array(pcm.buffer);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToInt16(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Int16Array(bytes.buffer);
+}
+
+// Linear-resample the model's 24kHz audio down to the 16kHz output context.
+function resampleToContext(float, fromRate, toRate) {
+  if (fromRate === toRate) return float;
+  const ratio = fromRate / toRate;
+  const outLen = Math.floor(float.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const idx = i * ratio;
+    const i0 = Math.floor(idx);
+    const frac = idx - i0;
+    const s0 = float[i0] || 0;
+    const s1 = i0 + 1 < float.length ? float[i0 + 1] : s0;
+    out[i] = s0 + (s1 - s0) * frac;
+  }
+  return out;
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// ---- report view ------------------------------------------------------------
+
+function scoreColor(score) {
+  if (score >= 75) return "#16a34a";
+  if (score >= 50) return "#d97706";
+  return "#dc2626";
+}
+
+function ReportView({ report, audioUrl, durationSeconds }) {
+  if (!report) return null;
+  const score = report.overall_score ?? 0;
+  return (
+    <div className="mi-report">
+      <div className="mi-report-head">
+        <div className="mi-score-ring" style={{ "--sc": scoreColor(score) }}>
+          <span className="mi-score-num">{score}</span>
+          <span className="mi-score-lbl">/ 100</span>
+        </div>
+        <div>
+          <div className="mi-verdict">{report.verdict || "Interview complete"}</div>
+          {report.summary && <p className="mi-summary">{report.summary}</p>}
+          {durationSeconds != null && (
+            <div className="mi-meta">Duration: {fmtTime(durationSeconds)}</div>
+          )}
+        </div>
+      </div>
+
+      {audioUrl && (
+        <div className="mi-card">
+          <h4>🎧 Listen back</h4>
+          <audio controls src={audioUrl} style={{ width: "100%" }} />
+        </div>
+      )}
+
+      {report.competencies?.length > 0 && (
+        <div className="mi-card">
+          <h4>Competencies</h4>
+          {report.competencies.map((c, i) => (
+            <div key={i} className="mi-comp">
+              <div className="mi-comp-row">
+                <span>{c.name}</span>
+                <strong style={{ color: scoreColor(c.score ?? 0) }}>{c.score ?? 0}</strong>
+              </div>
+              <div className="mi-bar"><div className="mi-bar-fill" style={{ width: `${Math.max(0, Math.min(100, c.score ?? 0))}%`, background: scoreColor(c.score ?? 0) }} /></div>
+              {c.note && <p className="mi-note">{c.note}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mi-two-col">
+        {report.strengths?.length > 0 && (
+          <div className="mi-card">
+            <h4>✅ Strengths</h4>
+            <ul>{report.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          </div>
+        )}
+        {report.weaknesses?.length > 0 && (
+          <div className="mi-card">
+            <h4>⚠️ Areas to improve</h4>
+            <ul>{report.weaknesses.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          </div>
+        )}
+      </div>
+
+      {report.recommendations?.length > 0 && (
+        <div className="mi-card">
+          <h4>🎯 Recommendations</h4>
+          <ul>{report.recommendations.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+
+      {report.question_notes?.length > 0 && (
+        <div className="mi-card">
+          <h4>📋 Question-by-question</h4>
+          {report.question_notes.map((q, i) => (
+            <div key={i} className="mi-qnote">
+              <div className="mi-qnote-q">{q.question}</div>
+              <div className="mi-qnote-a">{q.assessment}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- main page --------------------------------------------------------------
+
+export default function MockInterview() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const [view, setView] = useState("home");     // home | live | report
+  const [status, setStatus] = useState("");     // human-readable status line
+  const [error, setError] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [aiSpeaking, setAiSpeaking] = useState(false);
+
+  const [sessions, setSessions] = useState(null);
+  const [activeReport, setActiveReport] = useState(null); // {report, audioUrl, durationSeconds}
+
+  // mutable refs (audio graph + socket)
+  const wsRef = useRef(null);
+  const ctxRef = useRef(null);
+  const streamRef = useRef(null);
+  const playerRef = useRef(null);
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const micBufRef = useRef([]);
+  const micLenRef = useRef(0);
+  const mutedRef = useRef(false);
+  const timerRef = useRef(null);
+  const aiTimeoutRef = useRef(null);
+  const pendingSessionRef = useRef(null);
+  const objectUrlsRef = useRef([]);
+  const endedRef = useRef(false); // true once End was requested or a report arrived
+
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
+
+  const loadSessions = useCallback(async () => {
+    try { setSessions(await api.listInterviewSessions(id)); }
+    catch { setSessions([]); }
+  }, [id]);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const cleanup = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (aiTimeoutRef.current) { clearTimeout(aiTimeoutRef.current); aiTimeoutRef.current = null; }
+    try { recorderRef.current && recorderRef.current.state !== "inactive" && recorderRef.current.stop(); } catch (_) {}
+    try { wsRef.current && wsRef.current.close(); } catch (_) {}
+    wsRef.current = null;
+    try { streamRef.current && streamRef.current.getTracks().forEach(t => t.stop()); } catch (_) {}
+    streamRef.current = null;
+    try { ctxRef.current && ctxRef.current.state !== "closed" && ctxRef.current.close(); } catch (_) {}
+    ctxRef.current = null;
+    playerRef.current = null;
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    cleanup();
+    objectUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
+  }, [cleanup]);
+
+  const flushMic = () => {
+    if (micLenRef.current === 0) return;
+    const merged = new Float32Array(micLenRef.current);
+    let off = 0;
+    for (const b of micBufRef.current) { merged.set(b, off); off += b.length; }
+    micBufRef.current = []; micLenRef.current = 0;
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "audio", data: floatToPcm16Base64(merged) }));
+    }
+  };
+
+  const handleReport = useCallback((data) => {
+    endedRef.current = true;
+    pendingSessionRef.current = data?.session_id || null;
+    const report = data?.report || null;
+    const durationSeconds = data?.duration_seconds ?? elapsed;
+    // Stop recording; the onstop handler builds the blob, plays it locally, and uploads it.
+    const finish = (audioUrl) => {
+      setActiveReport({ report, audioUrl, durationSeconds });
+      setView("report");
+      cleanup();
+      loadSessions();
+    };
+    const rec = recorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      rec.onstop = async () => {
+        let audioUrl = null;
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+          if (blob.size > 0) {
+            audioUrl = URL.createObjectURL(blob);
+            objectUrlsRef.current.push(audioUrl);
+            if (pendingSessionRef.current) {
+              api.uploadInterviewAudio(pendingSessionRef.current, blob).catch(() => {});
+            }
+          }
+        } catch (_) {}
+        finish(audioUrl);
+      };
+      try { rec.stop(); } catch { finish(null); }
+    } else {
+      finish(null);
+    }
+  }, [cleanup, elapsed, loadSessions]);
+
+  const endInterview = useCallback(() => {
+    endedRef.current = true;
+    setStatus("Generating your report…");
+    const ws = wsRef.current;
+    flushMic();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "end" }));
+    } else {
+      // No live socket — nothing to grade.
+      cleanup();
+      setView("home");
+    }
+  }, [cleanup]);
+
+  const startInterview = useCallback(async () => {
+    setError(""); setActiveReport(null); setElapsed(0); setMuted(false);
+    endedRef.current = false; pendingSessionRef.current = null;
+    setStatus("Requesting microphone…"); setView("live");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (_) {
+      setError("Microphone access is required for the live interview.");
+      setView("home");
+      return;
+    }
+    streamRef.current = stream;
+
+    try {
+      setStatus("Connecting…");
+      const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: IN_RATE });
+      ctxRef.current = ctx;
+      await ctx.audioWorklet.addModule("/interview-capture-processor.js");
+      await ctx.audioWorklet.addModule("/interview-pcm-player.js");
+
+      const micSource = ctx.createMediaStreamSource(stream);
+      const captureNode = new AudioWorkletNode(ctx, "interview-capture-processor");
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      micSource.connect(captureNode);
+      captureNode.connect(silentGain);
+      silentGain.connect(ctx.destination);
+
+      const player = new AudioWorkletNode(ctx, "interview-pcm-player");
+      player.connect(ctx.destination);
+      playerRef.current = player;
+
+      // Mix mic + AI into one stream and record the whole conversation.
+      const mixDest = ctx.createMediaStreamDestination();
+      micSource.connect(mixDest);
+      player.connect(mixDest);
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : (MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "");
+      chunksRef.current = [];
+      const rec = new MediaRecorder(mixDest.stream, mimeType ? { mimeType } : undefined);
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+      recorderRef.current = rec;
+      rec.start(1000);
+
+      // Mic frames -> batched -> Gemini
+      captureNode.port.onmessage = (e) => {
+        if (mutedRef.current) return;
+        micBufRef.current.push(e.data);
+        micLenRef.current += e.data.length;
+        if (micLenRef.current >= MIC_FLUSH_SAMPLES) flushMic();
+      };
+
+      // Open the relay socket
+      const ws = new WebSocket(api.liveInterviewWsUrl(id));
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setStatus("Listening…");
+        // start the count-up timer
+        timerRef.current = setInterval(() => {
+          setElapsed((prev) => {
+            const next = prev + 1;
+            if (next >= MAX_SECONDS) endInterview();
+            return next;
+          });
+        }, 1000);
+      };
+
+      ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === "audio") {
+          const int16 = base64ToInt16(msg.data);
+          const f = new Float32Array(int16.length);
+          for (let i = 0; i < int16.length; i++) f[i] = int16[i] / 32768;
+          const resampled = resampleToContext(f, OUT_RATE, IN_RATE);
+          playerRef.current && playerRef.current.port.postMessage(resampled);
+          setAiSpeaking(true);
+          setStatus("AI speaking…");
+          if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
+          aiTimeoutRef.current = setTimeout(() => { setAiSpeaking(false); setStatus("Listening…"); }, 500);
+        } else if (msg.type === "interrupted") {
+          playerRef.current && playerRef.current.port.postMessage("flush");
+          setAiSpeaking(false); setStatus("Listening…");
+        } else if (msg.type === "status") {
+          if (msg.state === "connected") setStatus("Listening…");
+          if (msg.state === "time_up") setStatus("Time's up — wrapping up…");
+        } else if (msg.type === "report") {
+          handleReport(msg.data);
+        } else if (msg.type === "error") {
+          setError(msg.message || "The interview ended unexpectedly.");
+          cleanup();
+          setView("home");
+        }
+      };
+
+      ws.onerror = () => { if (!endedRef.current) setError("Connection error. Please try again."); };
+      ws.onclose = () => {
+        // Unexpected drop before the interview was ended / a report arrived.
+        if (!endedRef.current) {
+          setError("The interview connection dropped. Your progress up to this point may not have been saved.");
+          cleanup();
+          setView("home");
+          loadSessions();
+        }
+      };
+    } catch (err) {
+      setError("Could not start audio: " + (err?.message || err));
+      cleanup();
+      setView("home");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, endInterview, handleReport, cleanup]);
+
+  const openSession = async (row) => {
+    try {
+      const detail = await api.getInterviewSession(row.id);
+      let audioUrl = null;
+      if (detail.has_audio) {
+        try { audioUrl = await api.interviewAudioObjectUrl(row.id); objectUrlsRef.current.push(audioUrl); }
+        catch (_) {}
+      }
+      setActiveReport({ report: detail.report, audioUrl, durationSeconds: detail.duration_seconds });
+      setView("report");
+    } catch (_) {
+      setError("Could not load that interview.");
+    }
+  };
+
+  // ---- render ----
+  return (
+    <div className="mi-page">
+      <div className="mi-topbar">
+        <button className="btn btn-ghost btn-sm" onClick={() => { cleanup(); navigate(`/editor/${id}`); }}>← Back to editor</button>
+        <div className="mi-title">🎙️ Live Mock Interview</div>
+        <div style={{ width: 110 }} />
+      </div>
+
+      {error && <div className="mi-error">{error}</div>}
+
+      {view === "home" && (
+        <div className="mi-home">
+          <div className="mi-hero">
+            <div className="mi-orb idle">🎙️</div>
+            <h2>Practice a real-time voice interview</h2>
+            <p>
+              An AI interviewer reads your resume, then asks progressively deeper questions
+              based on your background. Your mic stays open for the whole session (up to 30 minutes).
+              You'll get a scored report — and the recording — at the end.
+            </p>
+            <button className="btn btn-primary mi-start" onClick={startInterview}>Start Interview</button>
+            <div className="mi-tip">Tip: use headphones and find a quiet room for the best experience.</div>
+          </div>
+
+          <div className="mi-card">
+            <h4>Previous Interviews</h4>
+            {sessions === null ? (
+              <p className="mi-note">Loading…</p>
+            ) : sessions.length === 0 ? (
+              <p className="mi-note">No interviews yet. Your recorded sessions will appear here.</p>
+            ) : (
+              <div className="mi-session-list">
+                {sessions.map((s) => (
+                  <button key={s.id} className="mi-session-row" onClick={() => openSession(s)}>
+                    <div>
+                      <div className="mi-session-title">{s.resume_title || "Interview"}</div>
+                      <div className="mi-note">{new Date(s.created_at).toLocaleString()} · {fmtTime(s.duration_seconds || 0)}{s.has_audio ? " · 🎧" : ""}</div>
+                    </div>
+                    <div className="mi-session-score" style={{ color: scoreColor(s.overall_score ?? 0) }}>
+                      {s.overall_score ?? "—"}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {view === "live" && (
+        <div className="mi-live">
+          <div className={`mi-orb ${aiSpeaking ? "speaking" : "listening"}`}>🎙️</div>
+          <div className="mi-status">{status || "Connecting…"}</div>
+          <div className="mi-timer">{fmtTime(elapsed)} <span className="mi-timer-max">/ {fmtTime(MAX_SECONDS)}</span></div>
+          <div className="mi-controls">
+            <button className={`btn ${muted ? "btn-primary" : "btn-ghost"}`} onClick={() => setMuted(m => !m)}>
+              {muted ? "🔇 Unmute" : "🎤 Mute"}
+            </button>
+            <button className="btn btn-danger mi-end" onClick={endInterview}>End Interview</button>
+          </div>
+          <div className="mi-tip">Speak naturally. The AI will follow up on your answers — go into detail.</div>
+        </div>
+      )}
+
+      {view === "report" && (
+        <div className="mi-report-wrap">
+          <ReportView
+            report={activeReport?.report}
+            audioUrl={activeReport?.audioUrl}
+            durationSeconds={activeReport?.durationSeconds}
+          />
+          <div className="mi-report-actions">
+            <button className="btn btn-ghost" onClick={() => { setActiveReport(null); setView("home"); loadSessions(); }}>← Previous interviews</button>
+            <button className="btn btn-primary" onClick={() => { setActiveReport(null); startInterview(); }}>Start another</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

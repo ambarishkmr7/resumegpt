@@ -300,6 +300,51 @@ export const api = {
       body: JSON.stringify({ content, role }),
     }).then(handle),
 
+  // ---- Live Audio Mock Interview ----
+  // WebSocket URL for the live session (JWT passed as query param — browsers
+  // can't set Authorization headers on a WebSocket).
+  liveInterviewWsUrl: (resumeId) => {
+    const token = localStorage.getItem("token") || "";
+    const httpBase = BASE || window.location.origin;
+    const wsBase = httpBase.replace(/^http/, "ws");
+    return `${wsBase}/api/resumes/mock-interview-live/${resumeId}?token=${encodeURIComponent(token)}`;
+  },
+
+  listInterviewSessions: (resumeId) =>
+    fetch(`${BASE}/api/resumes/interview-sessions${resumeId ? `?resume_id=${resumeId}` : ""}`, {
+      headers: { ...authHeaders() },
+    }).then(handle),
+
+  getInterviewSession: (id) =>
+    fetch(`${BASE}/api/resumes/interview-sessions/${id}`, {
+      headers: { ...authHeaders() },
+    }).then(handle),
+
+  uploadInterviewAudio: (id, blob) => {
+    const fd = new FormData();
+    fd.append("file", blob, `interview-${id}.webm`);
+    return fetch(`${BASE}/api/resumes/interview-sessions/${id}/audio`, {
+      method: "POST",
+      headers: { ...authHeaders() },
+      body: fd,
+    }).then(handle);
+  },
+
+  // Fetch the recording as an authenticated blob and return an object URL.
+  interviewAudioObjectUrl: async (id) => {
+    const res = await fetch(`${BASE}/api/resumes/interview-sessions/${id}/audio`, {
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error(`Could not load recording (${res.status})`);
+    return URL.createObjectURL(await res.blob());
+  },
+
+  deleteInterviewSession: (id) =>
+    fetch(`${BASE}/api/resumes/interview-sessions/${id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders() },
+    }).then(handle),
+
   jobAgent: (content, target_role, location) =>
     fetch(`${BASE}/api/resumes/job-agent`, {
       method: "POST",

@@ -1,16 +1,21 @@
+import asyncio
+import io
 import logging
 import uuid
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Form, WebSocket
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.ai import services as ai_services
+from app.ai import live_interview
 from app.config import get_settings
 from app.core.deps import get_current_user
-from app.database import get_db
-from app.models import Resume, User
+from app.core.security import decode_token
+from app.database import get_db, SessionLocal
+from app.models import InterviewSession, Resume, User
 from app.resumes import ats as ats_engine
 from app.resumes import generator
 from app.resumes import parser
@@ -86,6 +91,39 @@ def create_resume(payload: ResumeCreate, user: User = Depends(get_current_user),
     db.add(r); db.commit(); db.refresh(r)
     logger.info("Resume created: %s (user=%s, ats=%s)", r.title, user.id, r.ats_score)
     return r
+
+
+# NOTE: registered before the "/{resume_id}" catch-all below so the literal
+# "/interview-sessions" path isn't captured as a resume id.
+def _serialize_session(s: InterviewSession, detail: bool = False) -> dict:
+    report = s.report or {}
+    out = {
+        "id": s.id,
+        "resume_id": s.resume_id,
+        "resume_title": s.resume_title,
+        "model": s.model,
+        "duration_seconds": s.duration_seconds,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "overall_score": report.get("overall_score"),
+        "verdict": report.get("verdict"),
+        "has_audio": bool(s.audio_key),
+    }
+    if detail:
+        out["report"] = report
+        out["transcript"] = s.transcript or []
+        out["audio_mime"] = s.audio_mime
+    return out
+
+
+@router.get("/interview-sessions")
+def list_interview_sessions(resume_id: str = Query(None), user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """List past interview sessions for the user (optionally filtered by resume)."""
+    q = db.query(InterviewSession).filter(InterviewSession.user_id == user.id)
+    if resume_id:
+        q = q.filter(InterviewSession.resume_id == resume_id)
+    rows = q.order_by(InterviewSession.created_at.desc()).all()
+    return [_serialize_session(s) for s in rows]
 
 
 @router.get("/{resume_id}", response_model=ResumeOut)
@@ -425,6 +463,149 @@ def job_agent(payload: dict, user: User = Depends(get_current_user)):
     """AI job search agent."""
     content = ResumeContent.model_validate(payload.get("content", {}))
     return ai_services.ai_job_agent(content, payload.get("target_role"), payload.get("location"))
+
+
+# ---------- Live Audio Mock Interview (Gemini Live) ----------
+
+@router.websocket("/mock-interview-live/{resume_id}")
+async def mock_interview_live(websocket: WebSocket, resume_id: str, token: str = Query("")):
+    """Real-time audio interview. Relays PCM audio between the browser and a
+    Gemini Live session seeded with the resume, then persists a recorded
+    ``InterviewSession`` (transcript + scored report) for later review.
+
+    Auth: JWT is passed as the ``token`` query param (browsers can't set the
+    Authorization header on a WebSocket), so we decode it directly instead of
+    reusing ``get_current_user``.
+    """
+    await websocket.accept()
+
+    user_id = decode_token(token)
+    if not user_id:
+        await websocket.send_json({"type": "error", "message": "Authentication failed. Please sign in again."})
+        await websocket.close(code=4401)
+        return
+
+    # Load the resume with a short-lived session (don't hold a DB connection for
+    # the whole interview).
+    db = SessionLocal()
+    try:
+        resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user_id).first()
+        if not resume:
+            await websocket.send_json({"type": "error", "message": "Resume not found."})
+            await websocket.close(code=4404)
+            return
+        resume_title = resume.title
+        try:
+            content = ResumeContent.model_validate(resume.content or {})
+        except Exception:
+            content = ResumeContent()
+    finally:
+        db.close()
+
+    started_at = datetime.utcnow()
+    result = await live_interview.run_interview_session(websocket, content)
+    ended_at = datetime.utcnow()
+
+    # Report generation is a blocking LLM call — run it off the event loop.
+    report = await asyncio.to_thread(
+        live_interview.generate_interview_report, content, result.get("transcript", [])
+    )
+
+    session_id = None
+    db = SessionLocal()
+    try:
+        sess = InterviewSession(
+            user_id=user_id,
+            resume_id=resume_id,
+            resume_title=resume_title,
+            model=result.get("model"),
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_seconds=result.get("duration_seconds"),
+            transcript=result.get("transcript", []),
+            report=report,
+        )
+        db.add(sess)
+        db.commit()
+        db.refresh(sess)
+        session_id = sess.id
+    except Exception:
+        logger.exception("Failed to persist interview session")
+        db.rollback()
+    finally:
+        db.close()
+
+    try:
+        await websocket.send_json({
+            "type": "report",
+            "data": {
+                "session_id": session_id,
+                "report": report,
+                "duration_seconds": result.get("duration_seconds"),
+            },
+        })
+    except Exception:
+        pass
+    try:
+        await websocket.close()
+    except Exception:
+        pass
+
+
+def _get_owned_session(session_id: str, user: User, db: Session) -> InterviewSession:
+    s = db.query(InterviewSession).filter(
+        InterviewSession.id == session_id, InterviewSession.user_id == user.id
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    return s
+
+
+@router.get("/interview-sessions/{session_id}")
+def get_interview_session(session_id: str, user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    return _serialize_session(_get_owned_session(session_id, user, db), detail=True)
+
+
+@router.post("/interview-sessions/{session_id}/audio")
+async def upload_interview_audio(session_id: str, file: UploadFile = File(...),
+                                 user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Store the recorded audio for a finished interview session."""
+    s = _get_owned_session(session_id, user, db)
+    data = await file.read()
+    max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024 * 6  # recordings can be larger than resumes
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Recording is too large.")
+    mime = file.content_type or "audio/webm"
+    ext = "webm" if "webm" in mime else ("ogg" if "ogg" in mime else "bin")
+    key = f"interviews/{user.id}/{session_id}.{ext}"
+    storage.upload_bytes(data, key, content_type=mime)
+    s.audio_key = key
+    s.audio_mime = mime
+    db.commit()
+    return {"ok": True, "has_audio": True}
+
+
+@router.get("/interview-sessions/{session_id}/audio")
+def get_interview_audio(session_id: str, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Stream the stored interview recording back for playback."""
+    s = _get_owned_session(session_id, user, db)
+    if not s.audio_key:
+        raise HTTPException(status_code=404, detail="No recording for this session.")
+    data = storage.download_bytes(s.audio_key)
+    return StreamingResponse(io.BytesIO(data), media_type=s.audio_mime or "audio/webm")
+
+
+@router.delete("/interview-sessions/{session_id}")
+def delete_interview_session(session_id: str, user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    s = _get_owned_session(session_id, user, db)
+    if s.audio_key:
+        storage.delete_object(s.audio_key)
+    db.delete(s)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/send-otp")

@@ -152,6 +152,29 @@ class UserProfile(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class InterviewSession(Base):
+    """A recorded live audio mock-interview session (Gemini Live).
+
+    Stores the transcript, the AI-generated scored report, session metadata, and
+    a reference to the recorded audio (kept in StorageService) so the user can
+    re-read and listen back later.
+    """
+    __tablename__ = "interview_sessions"
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    resume_id = Column(String, ForeignKey("resumes.id"), nullable=False, index=True)
+    resume_title = Column(String, nullable=True)     # snapshot of the resume title
+    model = Column(String, nullable=True)            # e.g. gemini-3.1-flash-live-preview
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    transcript = Column(JSON, nullable=True)         # list of {role, text}
+    report = Column(JSON, nullable=True)             # scored feedback report
+    audio_key = Column(String, nullable=True)        # StorageService key (filled after upload)
+    audio_mime = Column(String, nullable=True)       # e.g. audio/webm
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ContactMessage(Base):
     __tablename__ = "contact_messages"
     id = Column(String, primary_key=True, default=_uuid)

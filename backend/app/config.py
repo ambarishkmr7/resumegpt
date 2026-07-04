@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # Get key from: https://aistudio.google.com/app/apikey
     GEMINI_API_KEY: str = ""
 
+    # Gemini Live model used for the real-time audio mock interview
+    INTERVIEW_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
+    # Hard ceiling for a single live interview session (seconds)
+    INTERVIEW_MAX_SECONDS: int = 30 * 60
+
     # xAI Grok (OpenAI-compatible API)
     # Get key from: https://console.x.ai
     GROK_API_KEY: str = ""

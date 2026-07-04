@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import AudioInterview from "./AudioInterview.jsx";
 // import { auth } from "../firebase.js";                                    // Phone OTP — commented out
 // import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth"; // Phone OTP — commented out
 import { SkeletonLine, SkeletonBlock } from "./Skeleton.jsx";
 
-export default function ElitePanel({ content }) {
+export default function ElitePanel({ content, resumeId }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -19,12 +18,10 @@ export default function ElitePanel({ content }) {
 
   // Mock Interview
   const [interviewQs, setInterviewQs] = useState(null);
-  const [interviewRole, setInterviewRole] = useState("");
+  const [interviewRole] = useState("");  // legacy fallback for materials/text-interview calls (role inferred from resume)
   const [filterCat, setFilterCat] = useState("all");
   const [answers, setAnswers] = useState({});
   const [ratings, setRatings] = useState({});
-  const [audioMode, setAudioMode] = useState(false);
-  const [audioQCount, setAudioQCount] = useState(10);
 
   // Interview learning materials (replaces the old Text Interview flow)
   const [materials, setMaterials] = useState(null);
@@ -115,13 +112,11 @@ export default function ElitePanel({ content }) {
   };
 
   // ---- Mock Interview ----
-  const startInterview = async (mode) => {
+  const startInterview = async () => {
     setLoading(true); setError(""); setAnswers({}); setRatings({});
     try {
-      const count = mode === "audio" ? audioQCount : 55;
-      const qs = await api.mockInterview(content, interviewRole || null, "medium", count);
+      const qs = await api.mockInterview(content, interviewRole || null, "medium", 55);
       setInterviewQs(qs);
-      if (mode === "audio") setAudioMode(true);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -250,7 +245,7 @@ export default function ElitePanel({ content }) {
       <div className="ai-tools-grid">
         {tools.map(t => (
           <button key={t.id} className={`ai-tool-btn ${tab === t.id ? "active" : ""}`}
-            onClick={() => { if (t.href) { navigate(t.href); return; } setTab(t.id); setAudioMode(false); }} disabled={loading && tab !== t.id}>
+            onClick={() => { if (t.href) { navigate(t.href); return; } setTab(t.id); }} disabled={loading && tab !== t.id}>
             <span className="ai-tool-icon">{t.icon}</span><span>{t.label}</span>
           </button>
         ))}
@@ -294,24 +289,12 @@ export default function ElitePanel({ content }) {
       {tab === "interview" && (
         <div className="interview-panel">
 
-          {/* Audio Interview — full takeover */}
-          {audioMode && interviewQs ? (
-            <AudioInterview
-              content={content}
-              questions={interviewQs.questions}
-              role={interviewQs.role}
-              onExit={() => { setAudioMode(false); setInterviewQs(null); }}
-            />
-          ) : !materials ? (
+          {!materials ? (
             /* Start screen */
             <div>
               <p style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 12 }}>
                 Prepare with curated study material and solved questions & answers, or practice live with the AI audio interviewer.
               </p>
-              <div className="field"><label>Target Role</label>
-                <input value={interviewRole} onChange={e => setInterviewRole(e.target.value)}
-                  placeholder={content?.contact?.title || "e.g. Senior Software Engineer"} />
-              </div>
 
               <div className="interview-mode-cards">
                 {/* Learning Materials (replaces Text Interview) */}
@@ -331,26 +314,15 @@ export default function ElitePanel({ content }) {
                   )}
                 </div>
 
-                {/* Audio Mode (unchanged) */}
+                {/* Live Audio Interview (Gemini Live) */}
                 <div className="mode-card audio">
                   <div className="mode-icon">🎙️</div>
-                  <h4>AI Audio Interview</h4>
-                  <p>AI speaks questions aloud. You answer by voice. Real interview experience.</p>
-                  <div className="field" style={{ marginBottom: 8 }}>
-                    <label style={{ fontSize: 11 }}>Number of questions</label>
-                    <select value={audioQCount} onChange={e => setAudioQCount(Number(e.target.value))}>
-                      <option value={5}>5 (Quick practice)</option>
-                      <option value={10}>10 (Standard)</option>
-                      <option value={20}>20 (Thorough)</option>
-                      <option value={30}>30 (Deep practice)</option>
-                      <option value={55}>55 (Full interview)</option>
-                    </select>
-                  </div>
-                  <button className="btn btn-primary" onClick={() => startInterview("audio")} disabled={loading}
-                    style={{ width: "100%", background: "linear-gradient(135deg, #7c3aed, #5b21b6)" }}>
-                    {loading ? "Loading…" : "🎙️ Start AI Audio Interview"}
+                  <h4>Live Audio Interview</h4>
+                  <p>Practice a real-time voice interview with the AI. Mic stays open — up to 30 min. Get a scored report at the end.</p>
+                  <button className="btn btn-primary" style={{ width: "100%" }}
+                    onClick={() => navigate(`/editor/${resumeId}/interview`)} disabled={!resumeId}>
+                    Start Live Audio Interview
                   </button>
-                  <p style={{ fontSize: 10, color: "#888", marginTop: 4, textAlign: "center" }}>Requires Chrome · Microphone access</p>
                 </div>
               </div>
             </div>
