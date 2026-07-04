@@ -84,7 +84,7 @@ function ReportView({ report, audioUrl, durationSeconds }) {
       {audioUrl && (
         <div className="mi-card">
           <h4>🎧 Listen back</h4>
-          <audio controls src={audioUrl} style={{ width: "100%" }} />
+          <audio controls preload="metadata" src={audioUrl} style={{ width: "100%" }} />
         </div>
       )}
 
@@ -382,11 +382,10 @@ export default function MockInterview() {
   const openSession = async (row) => {
     try {
       const detail = await api.getInterviewSession(row.id);
-      let audioUrl = null;
-      if (detail.has_audio) {
-        try { audioUrl = await api.interviewAudioObjectUrl(row.id); objectUrlsRef.current.push(audioUrl); }
-        catch (_) {}
-      }
+      // The audio URL is just a reference — the backend streams it via HTTP
+      // Range requests, so the <audio> element buffers progressively and can
+      // seek without downloading the whole recording up front.
+      const audioUrl = detail.has_audio ? api.interviewAudioStreamUrl(row.id) : null;
       setActiveReport({ report: detail.report, audioUrl, durationSeconds: detail.duration_seconds });
       setView("report");
     } catch (_) {

@@ -118,6 +118,26 @@ class StorageService:
         else:
             return (self._local_root / key).read_bytes()
 
+    def get_size(self, key: str) -> int:
+        """Return the size in bytes of the object at *key* without downloading it."""
+        if self._backend == "s3":
+            return self._s3.head_object(Bucket=self._s3_bucket, Key=key)["ContentLength"]
+        return (self._local_root / key).stat().st_size
+
+    def download_range(self, key: str, start: int, end: int) -> bytes:
+        """Return the inclusive byte range [start, end] stored at *key*.
+
+        Fetches only that range from the backend (S3 Range GET, or a seek+read
+        on the local file) so large recordings can be streamed/seeked without
+        pulling the whole object into memory.
+        """
+        if self._backend == "s3":
+            resp = self._s3.get_object(Bucket=self._s3_bucket, Key=key, Range=f"bytes={start}-{end}")
+            return resp["Body"].read()
+        with (self._local_root / key).open("rb") as f:
+            f.seek(start)
+            return f.read(end - start + 1)
+
     def delete_object(self, key: str) -> None:
         """Delete the object at *key* (no-op if it doesn't exist)."""
         if not key:

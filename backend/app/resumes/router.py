@@ -1,12 +1,11 @@
 import asyncio
-import io
 import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Form, WebSocket
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, Form, WebSocket
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.ai import services as ai_services
@@ -587,14 +586,61 @@ async def upload_interview_audio(session_id: str, file: UploadFile = File(...),
 
 
 @router.get("/interview-sessions/{session_id}/audio")
-def get_interview_audio(session_id: str, user: User = Depends(get_current_user),
+def get_interview_audio(session_id: str, request: Request, token: str = Query(""),
                         db: Session = Depends(get_db)):
-    """Stream the stored interview recording back for playback."""
-    s = _get_owned_session(session_id, user, db)
+    """Stream the stored interview recording back for playback, honoring HTTP
+    Range requests so the <audio> element can start playing immediately and
+    seek without downloading the whole recording.
+
+    Auth: <audio src> can't set an Authorization header, so the JWT may also
+    arrive as a ``token`` query param (same pattern as the live-interview WS).
+    """
+    user_id = decode_token(token) if token else None
+    if not user_id:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            user_id = decode_token(auth[7:])
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    s = db.query(InterviewSession).filter(
+        InterviewSession.id == session_id, InterviewSession.user_id == user_id
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Interview session not found")
     if not s.audio_key:
         raise HTTPException(status_code=404, detail="No recording for this session.")
+
+    mime = s.audio_mime or "audio/webm"
+    total = storage.get_size(s.audio_key)
+
+    range_header = request.headers.get("range")
+    if range_header:
+        try:
+            spec = range_header.strip().lower().removeprefix("bytes=")
+            start_s, _, end_s = spec.partition("-")
+            start = int(start_s) if start_s else 0
+            end = min(int(end_s), total - 1) if end_s else total - 1
+        except (ValueError, IndexError):
+            start, end = 0, total - 1
+        chunk = storage.download_range(s.audio_key, start, end)
+        return Response(
+            content=chunk,
+            status_code=206,
+            media_type=mime,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(chunk)),
+            },
+        )
+
     data = storage.download_bytes(s.audio_key)
-    return StreamingResponse(io.BytesIO(data), media_type=s.audio_mime or "audio/webm")
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Accept-Ranges": "bytes", "Content-Length": str(len(data))},
+    )
 
 
 @router.delete("/interview-sessions/{session_id}")

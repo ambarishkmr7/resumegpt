@@ -330,13 +330,13 @@ export const api = {
     }).then(handle);
   },
 
-  // Fetch the recording as an authenticated blob and return an object URL.
-  interviewAudioObjectUrl: async (id) => {
-    const res = await fetch(`${BASE}/api/resumes/interview-sessions/${id}/audio`, {
-      headers: { ...authHeaders() },
-    });
-    if (!res.ok) throw new Error(`Could not load recording (${res.status})`);
-    return URL.createObjectURL(await res.blob());
+  // Direct, seekable URL for an <audio> element — the backend supports HTTP
+  // Range requests, so the browser streams/buffers progressively and can seek
+  // without downloading the whole recording. Token goes as a query param since
+  // <audio src> can't set an Authorization header.
+  interviewAudioStreamUrl: (id) => {
+    const token = localStorage.getItem("token") || "";
+    return `${BASE}/api/resumes/interview-sessions/${id}/audio?token=${encodeURIComponent(token)}`;
   },
 
   deleteInterviewSession: (id) =>
