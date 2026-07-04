@@ -111,7 +111,7 @@ CREATE TABLE visitor_logs (
 CREATE TABLE otp_verifications (
     id VARCHAR(64) NOT NULL PRIMARY KEY,
     user_id VARCHAR(64) NOT NULL,
-    mobile VARCHAR(20) NOT NULL,
+    mobile VARCHAR(100) NOT NULL,
     otp_code VARCHAR(10) NOT NULL,
     verified BOOLEAN DEFAULT FALSE,
     expires_at DATETIME NOT NULL,

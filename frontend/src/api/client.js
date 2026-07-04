@@ -6,6 +6,12 @@ function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Author auth uses a separate token so it never collides with user login.
+function authorHeaders() {
+  const token = localStorage.getItem("author_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function handle(res) {
   if (!res.ok) {
     let detail = `Request failed (${res.status})`;
@@ -88,6 +94,26 @@ export const api = {
     }).then(handle),
 
   me: () => fetch(`${BASE}/api/auth/me`, { headers: authHeaders() }).then(handle),
+
+  // ---- Staff (/sys-admin) ----
+  adminLoginJson: (email, password) =>
+    fetch(`${BASE}/api/auth/login-json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then(handle),
+  adminRegister: (body) =>
+    fetch(`${BASE}/api/auth/admin-register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(handle),
+  authorRegister: (body) =>
+    fetch(`${BASE}/api/author/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(handle),
 
   // ---- Templates ----
   templates: () => fetch(`${BASE}/api/templates`).then(handle),
@@ -267,6 +293,13 @@ export const api = {
       body: JSON.stringify({ content, question, answer, role }),
     }).then(handle),
 
+  interviewMaterials: (content, role) =>
+    fetch(`${BASE}/api/resumes/interview-materials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ content, role }),
+    }).then(handle),
+
   jobAgent: (content, target_role, location) =>
     fetch(`${BASE}/api/resumes/job-agent`, {
       method: "POST",
@@ -286,6 +319,20 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ mobile, otp }),
+    }).then(handle),
+
+  sendEmailOtp: (email) =>
+    fetch(`${BASE}/api/resumes/send-email-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ email }),
+    }).then(handle),
+
+  verifyEmailOtp: (email, otp) =>
+    fetch(`${BASE}/api/resumes/verify-email-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ email, otp }),
     }).then(handle),
 
   downloadUrl: (id, fmt) => `${BASE}/api/resumes/${id}/download?fmt=${fmt}`,
@@ -343,6 +390,9 @@ export const api = {
     fetch(`${BASE}/api/admin/public/cms`).then(handle),
   getSubscriptionPage: () =>
     fetch(`${BASE}/api/admin/public/cms/subscription`).then(handle),
+  // Homepage subscription panel content — sourced from cms_pages record 'cms_sub'.
+  getSubscriptionContent: () =>
+    fetch(`${BASE}/api/admin/public/cms/cms_sub`).then(handle),
 
 
   // ---- Profile ----
@@ -382,4 +432,46 @@ export const api = {
     }).then(handle),
   delete: (url) =>
     fetch(`${BASE}${url}`, { method: "DELETE", headers: authHeaders() }).then(handle),
+
+  // ---- Authors (public) ----
+  listAuthors: () => fetch(`${BASE}/api/authors`).then(handle),
+  getAuthor: (slug) => fetch(`${BASE}/api/authors/${slug}`).then(handle),
+
+  // ---- Author auth + content ----
+  authorLogin: (email, password) =>
+    fetch(`${BASE}/api/author/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then(handle),
+  authorLogout: () => localStorage.removeItem("author_token"),
+  authorMe: () => fetch(`${BASE}/api/author/me`, { headers: authorHeaders() }).then(handle),
+  authorUpdateProfile: (body) =>
+    fetch(`${BASE}/api/author/me`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authorHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  authorChangePassword: (current_password, new_password) =>
+    fetch(`${BASE}/api/author/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authorHeaders() },
+      body: JSON.stringify({ current_password, new_password }),
+    }).then(handle),
+  authorListPosts: () =>
+    fetch(`${BASE}/api/author/posts`, { headers: authorHeaders() }).then(handle),
+  authorCreatePost: (body) =>
+    fetch(`${BASE}/api/author/posts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authorHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  authorUpdatePost: (id, body) =>
+    fetch(`${BASE}/api/author/posts/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authorHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  authorDeletePost: (id) =>
+    fetch(`${BASE}/api/author/posts/${id}`, { method: "DELETE", headers: authorHeaders() }).then(handle),
 };

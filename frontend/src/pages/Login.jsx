@@ -59,6 +59,13 @@ export default function Login() {
 
   return (
     <AuthLayout>
+      <Link to="/" aria-label="Go to homepage" style={{ display: "inline-block", marginBottom: 14 }}>
+        <img
+          src="/logo-wordmark.png"
+          alt="resumesGPT — go to homepage"
+          style={{ height: 46, width: "auto", display: "block", borderRadius: 8, cursor: "pointer" }}
+        />
+      </Link>
       <h2>Welcome back</h2>
       <h3>To avail Elite plan benefits you must be logged in...</h3>
       <p className="sub">Sign in to keep building.</p>

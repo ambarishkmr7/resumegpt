@@ -32,6 +32,9 @@ from app.schemas import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 settings = get_settings()
+
+# Max resumes a user may keep for editing (My Resumes section).
+MAX_RESUMES = 4
 storage = StorageService(settings)
 
 
@@ -70,6 +73,13 @@ def list_resumes(user: User = Depends(get_current_user), db: Session = Depends(g
 @router.post("", response_model=ResumeOut, status_code=201)
 def create_resume(payload: ResumeCreate, user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
+    # Limit: a user may keep at most MAX_RESUMES resumes for editing.
+    existing = db.query(Resume).filter(Resume.user_id == user.id).count()
+    if existing >= MAX_RESUMES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"You can keep up to {MAX_RESUMES} resumes. Delete one to create a new resume.",
+        )
     r = Resume(user_id=user.id, title=payload.title, template_id=payload.template_id,
                content=payload.content.model_dump())
     r.ats_score = ats_engine.score_resume(payload.content).score
@@ -120,6 +130,12 @@ async def upload_resume(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Enforce the same per-user resume cap before doing any expensive parsing.
+    if db.query(Resume).filter(Resume.user_id == user.id).count() >= MAX_RESUMES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"You can keep up to {MAX_RESUMES} resumes. Delete one to import a new resume.",
+        )
     data = await file.read()
     if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"File exceeds {settings.MAX_UPLOAD_MB}MB")

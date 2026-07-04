@@ -65,6 +65,44 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
     return Token(access_token=token, user=UserOut.model_validate(user))
 
 
+class AdminRegister(UserCreate):
+    signup_code: str | None = None
+
+
+@router.post("/admin-register", response_model=Token, status_code=201)
+@limiter.limit("5/minute")
+def admin_register(request: Request, payload: AdminRegister, db: Session = Depends(get_db)):
+    """Create an admin user (used by the /sys-admin page, role=admin).
+
+    Guarded: if ADMIN_SIGNUP_CODE is set, it must match. If it's not set,
+    registration is allowed only while no admin exists yet (first-admin bootstrap)
+    to avoid leaving an open door to admin access.
+    """
+    admins_exist = db.query(User).filter(User.is_admin == True).first() is not None  # noqa: E712
+    if settings.ADMIN_SIGNUP_CODE:
+        if (payload.signup_code or "") != settings.ADMIN_SIGNUP_CODE:
+            raise HTTPException(status_code=403, detail="Invalid admin signup code")
+    elif admins_exist:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin registration is closed. Set ADMIN_SIGNUP_CODE to allow new admins.",
+        )
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(
+        email=payload.email,
+        full_name=payload.full_name,
+        hashed_password=hash_password(payload.password),
+        is_admin=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(user.id)
+    logger.info("New admin registered: %s (id=%s)", user.email, user.id)
+    return Token(access_token=token, user=UserOut.model_validate(user))
+
+
 @router.post("/login-json", response_model=Token)
 @limiter.limit("10/minute")
 def login_json(request: Request, payload: UserLogin, db: Session = Depends(get_db)):

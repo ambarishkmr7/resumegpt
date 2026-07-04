@@ -16,4 +16,6 @@ const firebaseConfig = {
 };
 
 const app  = initializeApp(firebaseConfig);
+console.log(app.options.projectId);
+console.log(app.options.apiKey);
 export const auth = getAuth(app);

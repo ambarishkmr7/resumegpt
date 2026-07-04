@@ -72,6 +72,43 @@ class Payment(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Author(Base):
+    """An editorial author who can log in and publish content shown in the
+    'Our Authors' (editorial-team) section."""
+    __tablename__ = "authors"
+    id = Column(String, primary_key=True, default=_uuid)
+    slug = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    role = Column(String, nullable=True)            # e.g. "Certified Resume Writer (CPRW)"
+    bio = Column(Text, nullable=True)
+    credentials = Column(String, nullable=True)     # e.g. "CPRW · 8 yrs"
+    avatar_url = Column(String, nullable=True)
+    linkedin_url = Column(String, nullable=True)
+    email = Column(String, unique=True, index=True, nullable=False)  # login id
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    display_order = Column(Integer, default=100)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    posts = relationship("AuthorPost", back_populates="author", cascade="all, delete-orphan")
+
+
+class AuthorPost(Base):
+    """Content posted by an author, displayed under their card in the editorial-team page."""
+    __tablename__ = "author_posts"
+    id = Column(String, primary_key=True, default=_uuid)
+    author_id = Column(String, ForeignKey("authors.id"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    slug = Column(String, index=True, nullable=False)
+    excerpt = Column(String, nullable=True)
+    content = Column(Text, nullable=False, default="")
+    status = Column(String, default="published")   # draft | published
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    published_at = Column(DateTime, nullable=True)
+    author = relationship("Author", back_populates="posts")
+
+
 class CmsPage(Base):
     __tablename__ = "cms_pages"
     id = Column(String, primary_key=True, default=_uuid)

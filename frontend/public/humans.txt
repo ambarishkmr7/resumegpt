@@ -1,0 +1,10 @@
+/* TEAM */
+Site: resumes-gpt — AI Resume Builder & Career Platform
+Contact: /page/contact-us
+Location: India
+
+/* SITE */
+Category: Business / Careers / Resume Builder
+Standards: HTML5, CSS3, JavaScript (React)
+Components: React, Vite, FastAPI
+Language: English

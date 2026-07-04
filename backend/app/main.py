@@ -23,6 +23,7 @@ from app.admin.router import router as admin_router
 from app.public_routes.router import router as public_router
 from app.agent.router import router as agent_router
 from app.profile.router import router as profile_router
+from app.authors.router import router as authors_router
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -55,6 +56,45 @@ def _seed_admin():
         db.close()
 
 
+def _seed_authors():
+    """Seed sample editorial authors with logins if the table is empty.
+
+    Mirrors authors_schema.sql so the 'Our Authors' section and author login work
+    out of the box. Default password for all seeded authors: 'Author@123'
+    (change it after first login). Override the default via AUTHOR_SEED_PASSWORD.
+    """
+    from app.models import Author
+    from app.core.security import hash_password
+    import os
+    db = SessionLocal()
+    try:
+        if db.query(Author).first():
+            return
+        pw = os.getenv("AUTHOR_SEED_PASSWORD", "Author@123")
+        h = hash_password(pw)
+        seed = [
+            ("ananya-iyer", "Ananya Iyer", "Lead Career Editor · CPRW",
+             "Ananya has reviewed over 8,000 resumes and coached job seekers from freshers to "
+             "senior leaders. She specialises in ATS optimisation and turning achievements into "
+             "measurable, recruiter-friendly impact.", "CPRW · 9 yrs", "ananya@resumes-gpt.com", 10),
+            ("rohan-mehta", "Rohan Mehta", "Technical Hiring Advisor · ex-Engineering Manager",
+             "Rohan spent 12 years building and hiring engineering teams. He advises on technical "
+             "resumes, system-design interviews, and what hiring managers look for beyond keywords.",
+             "ex-EM · 12 yrs", "rohan@resumes-gpt.com", 20),
+            ("priya-nair", "Priya Nair", "HR & Talent Acquisition Specialist",
+             "Priya has led talent acquisition for high-growth startups and enterprises. She writes "
+             "on interview preparation, salary negotiation, and modern AI-assisted hiring.",
+             "TA Lead · 10 yrs", "priya@resumes-gpt.com", 30),
+        ]
+        for slug, name, role, bio, creds, email, order in seed:
+            db.add(Author(slug=slug, name=name, role=role, bio=bio, credentials=creds,
+                          email=email, hashed_password=h, is_active=True, display_order=order))
+        db.commit()
+        logger.info("Seeded %d editorial authors (default password: Author@123)", len(seed))
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -79,6 +119,11 @@ async def lifespan(app: FastAPI):
         _seed_admin()
     except Exception as e:
         logger.warning("Admin seed skipped: %s", e)
+
+    try:
+        _seed_authors()
+    except Exception as e:
+        logger.warning("Author seed skipped: %s", e)
 
     logger.info("Startup complete — all routers mounted")
     yield
@@ -122,6 +167,7 @@ app.include_router(admin_router)
 app.include_router(public_router)
 app.include_router(agent_router)
 app.include_router(profile_router)
+app.include_router(authors_router)
 
 
 @app.get("/api/health")
@@ -139,8 +185,15 @@ async def _spa_fallback(full_path: str):
     # Serve an exact file if it exists (JS, CSS, favicon, robots.txt, etc.)
     candidate = os.path.normpath(os.path.join(FRONTEND_DIST, full_path))
     # Guard against path traversal: candidate must stay inside FRONTEND_DIST.
-    if full_path and (candidate == FRONTEND_DIST or candidate.startswith(FRONTEND_DIST + os.sep)) and os.path.isfile(candidate):
-        return FileResponse(candidate)
+    inside = candidate == FRONTEND_DIST or candidate.startswith(FRONTEND_DIST + os.sep)
+    if full_path and inside:
+        if os.path.isfile(candidate):
+            return FileResponse(candidate)
+        # Prerendered routes are written as <route>/index.html — serve those so
+        # crawlers and URL classifiers get static HTML with real meta + JSON-LD.
+        route_index = os.path.join(candidate, "index.html")
+        if os.path.isfile(route_index):
+            return FileResponse(route_index)
     # Everything else → index.html (React Router handles the URL client-side)
     index = os.path.join(FRONTEND_DIST, "index.html")
     if not os.path.isfile(index):

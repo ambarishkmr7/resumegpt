@@ -34,11 +34,14 @@ function buildContentFromProfile(profile) {
 }
 
 const SOURCE_COLORS = {
-  LinkedIn: { bg: "#0077b5", light: "#e8f4fb" },
-  Naukri:   { bg: "#ff7555", light: "#fff0ec" },
-  Indeed:   { bg: "#2557a7", light: "#eaf0fb" },
-  Monster:  { bg: "#6600cc", light: "#f3e8ff" },
-  Shine:    { bg: "#e25c00", light: "#fff3e8" },
+  LinkedIn:    { bg: "#0077b5", light: "#e8f4fb" },
+  Naukri:      { bg: "#ff7555", light: "#fff0ec" },
+  Indeed:      { bg: "#2557a7", light: "#eaf0fb" },
+  Monster:     { bg: "#6600cc", light: "#f3e8ff" },
+  Shine:       { bg: "#e25c00", light: "#fff3e8" },
+  "Remote.com":{ bg: "#16a34a", light: "#dcfce7" },
+  Crossover:   { bg: "#7c3aed", light: "#f3e8ff" },
+  "Remote.co": { bg: "#0891b2", light: "#e0f2fe" },
 };
 const TYPE_COLORS = {
   "Remote":    { bg: "#059669", text: "#fff" },
@@ -239,6 +242,9 @@ export default function JobsPage() {
         monster:   result.monster_url,
         shine:     result.shine_url,
         remote:    result.remote_jobs_url,
+        remoteCom: result.remote_com_url,
+        crossover: result.crossover_url,
+        remoteCo:  result.remote_co_url,
       });
     } catch (e) {
       setError(e.message || "Search failed. Please try again.");
@@ -258,12 +264,15 @@ export default function JobsPage() {
   const jobTypes = ["All", ...new Set(listings.map((j) => j.job_type))];
 
   const PLATFORM_LINKS = [
-    { label: "LinkedIn",     url: globalUrls.linkedin, color: "#0077b5" },
-    { label: "Naukri",       url: globalUrls.naukri,   color: "#ff7555" },
-    { label: "Indeed",       url: globalUrls.indeed,   color: "#2557a7" },
-    { label: "Monster",      url: globalUrls.monster,  color: "#6600cc" },
-    { label: "Shine",        url: globalUrls.shine,    color: "#e25c00" },
-    { label: "🌍 Remote Jobs", url: globalUrls.remote, color: "#059669" },
+    { label: "LinkedIn",      url: globalUrls.linkedin,  color: "#0077b5" },
+    { label: "Naukri",        url: globalUrls.naukri,    color: "#ff7555" },
+    { label: "Indeed",        url: globalUrls.indeed,    color: "#2557a7" },
+    { label: "Monster",       url: globalUrls.monster,   color: "#6600cc" },
+    { label: "Shine",         url: globalUrls.shine,     color: "#e25c00" },
+    { label: "🌍 Remote Jobs",url: globalUrls.remote,    color: "#059669" },
+    { label: "🌐 Remote.com", url: globalUrls.remoteCom, color: "#16a34a" },
+    { label: "🔄 Crossover",  url: globalUrls.crossover, color: "#7c3aed" },
+    { label: "🏠 Remote.co",  url: globalUrls.remoteCo,  color: "#0891b2" },
   ].filter((p) => p.url);
 
   return (
@@ -277,7 +286,7 @@ export default function JobsPage() {
           <button className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>← Back</button>
           <div>
             <h1>Find Jobs</h1>
-            <p>AI-matched job listings from LinkedIn, Naukri, Indeed, Monster, Shine &amp; Remote boards</p>
+            <p>AI-matched job listings from LinkedIn, Naukri, Indeed, Monster, Shine, Remote.com, Crossover &amp; Remote.co</p>
           </div>
         </div>
 
@@ -365,7 +374,7 @@ export default function JobsPage() {
                 <span className="plb-label">Browse all on:</span>
                 {PLATFORM_LINKS.map((p) => (
                   <a key={p.label} href={p.url} target="_blank" rel="noopener noreferrer"
-                    className="plb-btn" style={{ background: p.color }}>
+                    className="plb-btn" style={{ "--plb-color": p.color }}>
                     {p.label}
                   </a>
                 ))}
@@ -430,16 +439,19 @@ export default function JobsPage() {
             <h2>Find Your Next Opportunity</h2>
             <p>
               Your role and skills are pre-filled from your resume and profile.
-              Click <strong>Find Jobs</strong> to get AI-generated job postings with direct Apply buttons.
+              Click <strong>Find Jobs</strong> to get AI-matched job postings across all platforms — including worldwide remote jobs on Remote.com, Crossover &amp; Remote.co.
             </p>
             <div className="platform-pills-row">
               {[
-                { name: "LinkedIn",  color: "#0077b5" },
-                { name: "Naukri",    color: "#ff7555" },
-                { name: "Indeed",    color: "#2557a7" },
-                { name: "Monster",   color: "#6600cc" },
-                { name: "Shine",     color: "#e25c00" },
-                { name: "🌍 Remote", color: "#059669" },
+                { name: "LinkedIn",    color: "#0077b5" },
+                { name: "Naukri",      color: "#ff7555" },
+                { name: "Indeed",      color: "#2557a7" },
+                { name: "Monster",     color: "#6600cc" },
+                { name: "Shine",       color: "#e25c00" },
+                { name: "🌍 Remote",   color: "#059669" },
+                { name: "🌐 Remote.com",color: "#16a34a" },
+                { name: "🔄 Crossover",color: "#7c3aed" },
+                { name: "🏠 Remote.co",color: "#0891b2" },
               ].map(p => (
                 <span key={p.name} className="platform-pill" style={{ borderColor: p.color, color: p.color }}>
                   {p.name}
@@ -525,26 +537,39 @@ export default function JobsPage() {
         .platform-links-bar {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 10px;
           flex-wrap: wrap;
           margin-bottom: 18px;
-          padding: 14px 16px;
-          background: #fff;
-          border: 1px solid #e2dccf;
-          border-radius: 10px;
+          padding: 4px 2px 8px;
+          background: transparent;
+          border: none;
+          border-radius: 0;
         }
-        .plb-label { font-size: 13px; font-weight: 600; color: #57514a; margin-right: 4px; }
+        .plb-label {
+          font-size: 13px; font-weight: 600; color: #57514a;
+          margin-right: 2px; white-space: nowrap; flex: 0 0 auto;
+        }
         .plb-btn {
-          display: inline-block;
-          padding: 6px 14px;
-          color: #fff;
-          border-radius: 6px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          flex: 0 0 auto;
+          padding: 7px 16px;
+          background: #fff;
+          color: var(--plb-color, #0077b5);
+          border: 1.5px solid var(--plb-color, #0077b5);
+          border-radius: 999px;
           text-decoration: none;
           font-weight: 600;
           font-size: 13px;
-          transition: opacity 0.15s;
+          white-space: nowrap;
+          transition: background 0.15s, color 0.15s, transform 0.1s;
         }
-        .plb-btn:hover { opacity: 0.82; }
+        .plb-btn:hover {
+          background: var(--plb-color, #0077b5);
+          color: #fff;
+          transform: translateY(-1px);
+        }
 
         /* ── filter bar ── */
         .filter-bar {
@@ -755,8 +780,8 @@ export default function JobsPage() {
           .jc-logo { width: 36px; height: 36px; font-size: 16px; }
           .jc-title { font-size: 15px; }
           .jc-meta-right { display: none; }
-          .platform-links-bar { gap: 6px; }
-          .plb-btn { padding: 5px 10px; font-size: 12px; }
+          .platform-links-bar { gap: 8px; }
+          .plb-btn { padding: 6px 13px; font-size: 12px; }
           .filter-bar { flex-direction: column; align-items: flex-start; gap: 8px; }
           .filter-count { margin-left: 0; }
         }

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./context/AuthContext.jsx";
+import Seo from "./components/Seo.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
@@ -10,6 +11,13 @@ import Editor from "./pages/Editor.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
 import CmsPage from "./pages/CmsPage.jsx";
 import BlogPage from "./pages/BlogPage.jsx";
+import BlogPostPage from "./pages/BlogPostPage.jsx";
+import ResumeTemplatePage from "./pages/ResumeTemplatePage.jsx";
+import ResourcePage from "./pages/ResourcePage.jsx";
+import UserGuidePage from "./pages/UserGuidePage.jsx";
+import AuthorLogin from "./pages/AuthorLogin.jsx";
+import AuthorDashboard from "./pages/AuthorDashboard.jsx";
+import SysAdmin from "./pages/SysAdmin.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import CareerPage from "./pages/CareerPage.jsx";
 import JobsPage from "./pages/JobsPage.jsx";
@@ -57,13 +65,22 @@ function AdminProtected({ children }) {
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <Seo />
+      <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/page/:slug" element={<CmsPage />} />
       <Route path="/page/blog" element={<BlogPage />} />
+      <Route path="/blog/:slug" element={<BlogPostPage />} />
+      <Route path="/resume-template/:slug" element={<ResumeTemplatePage />} />
+      <Route path="/resources/:slug" element={<ResourcePage />} />
+      <Route path="/user-guide" element={<UserGuidePage />} />
+      <Route path="/author/login" element={<AuthorLogin />} />
+      <Route path="/author" element={<AuthorDashboard />} />
+      <Route path="/sys-admin" element={<SysAdmin />} />
       <Route path="/" element={<LandingPage />} />
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="/editor/:id" element={<Protected><Editor /></Protected>} />
@@ -72,6 +89,7 @@ export default function App() {
       <Route path="/career" element={<Protected><CareerPage /></Protected>} />
       <Route path="/jobs" element={<Protected><JobsPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }

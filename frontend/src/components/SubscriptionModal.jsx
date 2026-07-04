@@ -1,9 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { parseSubscription } from "../utils/subscriptionContent";
 
 export default function SubscriptionModal({ onClose, onSuccess }) {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
+  // Plan content comes from cms_pages record 'cms_sub' (same source as homepage).
+  const [subContent, setSubContent] = useState(null);
+  useEffect(() => {
+    api.getSubscriptionContent().then((d) => setSubContent(d && d.content)).catch(() => {});
+  }, []);
+  const parsedSub = parseSubscription(subContent);
+  const price = parsedSub.price || "1,999";
+  const features = parsedSub.features.length ? parsedSub.features : null;
 
   const handleCheckout = async () => {
     setProcessing(true); setError("");
@@ -59,28 +68,34 @@ export default function SubscriptionModal({ onClose, onSuccess }) {
       <div className="modal sub-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <img src="/logo.png" alt="resumesGPT" style={{ height: 48, margin: "0 auto 10px", display: "block" }} />
         <h2 style={{ textAlign: "center", marginTop: 0 }}>Unlock resumesGPT Elite</h2>
-        <p className="sub-desc">One-time payment of ₹1,999. Lifetime access. No recurring charges.</p>
+        <p className="sub-desc">One-time payment of ₹{price}. Lifetime access. No recurring charges.</p>
 
         <div className="elite-checkout-card">
           <div className="plan-popular" style={{ position: "static", transform: "none", marginBottom: 12 }}>✨ LIFETIME ACCESS</div>
-          <div className="plan-price" style={{ textAlign: "center" }}><span className="plan-currency">₹</span>1,999</div>
+          <div className="plan-price" style={{ textAlign: "center" }}><span className="plan-currency">₹</span>{price}</div>
           <div className="plan-period" style={{ textAlign: "center" }}>one-time payment</div>
 
           <ul className="plan-features">
-            <li>✓ Unlimited PDF & DOCX downloads</li>
-            <li>✓ All 30 professional templates</li>
-            <li>✓ AI career analysis & roadmap</li>
-            <li>✓ AI resume rewriting (3 variants)</li>
-            <li>✓ Professional writeup & cover letter generator</li>
-            <li>✓ Job search agent — LinkedIn, Naukri, Indeed, RemoteJobs</li>
-            <li>✓ Reference resume import</li>
-            <li>🤖 AI Career Counseling Bot</li>
-            <li>🎤 Mock Interview Practice</li>
-            <li>📊 Interview Rating & Gap Analysis</li>
-            <li>🚀 AI Job Application Agent</li>
-            <li>✓ YouTube & course recommendations</li>
-            <li>✓ Priority support</li>
-            <li>✓ Early access to new features</li>
+            {features ? (
+              features.map((f, i) => <li key={i}>✓ {f}</li>)
+            ) : (
+              <>
+                <li>✓ Unlimited PDF & DOCX downloads</li>
+                <li>✓ All 30 professional templates</li>
+                <li>✓ AI career analysis & roadmap</li>
+                <li>✓ AI resume rewriting (3 variants)</li>
+                <li>✓ Professional writeup & cover letter generator</li>
+                <li>✓ Job search agent — LinkedIn, Naukri, Indeed, RemoteJobs</li>
+                <li>✓ Reference resume import</li>
+                <li>🤖 AI Career Counseling Bot</li>
+                <li>🎤 Mock Interview Practice</li>
+                <li>📊 Interview Rating & Gap Analysis</li>
+                <li>🚀 AI Job Application Agent</li>
+                <li>✓ YouTube & course recommendations</li>
+                <li>✓ Priority support</li>
+                <li>✓ Early access to new features</li>
+              </>
+            )}
           </ul>
         </div>
 
@@ -89,7 +104,7 @@ export default function SubscriptionModal({ onClose, onSuccess }) {
         <button className="btn btn-primary"
           style={{ width: "100%", padding: 14, fontSize: 16, marginTop: 16, background: "linear-gradient(135deg, #d97706, #b45309)" }}
           onClick={handleCheckout} disabled={processing}>
-          {processing ? "Processing payment…" : "Pay ₹1,999 — Unlock Everything"}
+          {processing ? "Processing payment…" : `Pay ₹${price} — Unlock Everything`}
         </button>
 
         <p className="sub-note">🔒 Secure payment via Razorpay · SSL encrypted · Refund within 14 days</p>

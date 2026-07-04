@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -108,6 +108,27 @@ CMS_DEFAULTS = [
 
 import re as _re
 
+# Homepage subscription panel content. Sourced from cms_pages by record id
+# 'cms_sub' (slug also 'cms_sub') so it can be edited in the DB/admin without a
+# code change. Keep the "**Heading — ₹PRICE**" + "• feature" shape: the homepage
+# parses the price and bullet features from it.
+CMS_SUB_ID = "cms_sub"
+CMS_SUB_CONTENT = (
+    "**Elite Plan — ₹1,999 (One-time)**\n"
+    "• Everything in Free\n"
+    "• Unlimited PDF and DOCX downloads\n"
+    "• All 30 professional templates\n"
+    "• Job search & Posting agent (LinkedIn, Naukri, Indeed)\n"
+    "• 🤖 AI Career Counseling Bot\n"
+    "• 🎤 Mock Interview Practice\n"
+    "• 📚 Learning Materials — skill-based Q&A\n"
+    "• 📊 Interview Gap Analysis\n"
+    "• 🚀 AI Job Application Agent\n"
+    "• Priority support & early access\n"
+    "• Lifetime access — no recurring fees"
+)
+
+
 def _seed_cms(db: Session):
     """Seed default CMS pages if they don't exist. Also reset any rows whose content contains raw HTML/JSX tags."""
     for slug, title, content, icon in CMS_DEFAULTS:
@@ -119,6 +140,17 @@ def _seed_cms(db: Session):
             if existing.content and _re.search(r'<[a-zA-Z][^>]*/?>', existing.content):
                 existing.content = content
                 existing.title = title
+
+    # Homepage subscription record, addressed by id 'cms_sub'.
+    sub = db.query(CmsPage).filter(
+        or_(CmsPage.id == CMS_SUB_ID, CmsPage.slug == CMS_SUB_ID)
+    ).first()
+    if not sub:
+        db.add(CmsPage(id=CMS_SUB_ID, slug=CMS_SUB_ID, title="👑 Elite Plan",
+                       content=CMS_SUB_CONTENT, icon="👑"))
+    elif sub.content and _re.search(r'<[a-zA-Z][^>]*/?>', sub.content):
+        sub.content = CMS_SUB_CONTENT
+
     db.commit()
 
 
@@ -174,7 +206,11 @@ def get_public_stats(db: Session = Depends(get_db)):
 @router.get("/public/cms/{slug}", response_model=CmsPageOut)
 def get_public_cms_page(slug: str, db: Session = Depends(get_db)):
     _seed_cms(db)
-    page = db.query(CmsPage).filter(CmsPage.slug == slug).first()
+    # Match by slug or by record id (e.g. 'cms_sub') so callers can address a row
+    # by either identifier.
+    page = db.query(CmsPage).filter(
+        or_(CmsPage.slug == slug, CmsPage.id == slug)
+    ).first()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     return CmsPageOut(id=page.id, slug=page.slug, title=page.title, content=page.content, icon=page.icon,

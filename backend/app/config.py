@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # Admin seed (optional)
     ADMIN_EMAIL: str = ""
     ADMIN_PASSWORD: str = ""
+    # Optional gate for self-service registration on the /sys-admin page.
+    # If set, the matching code is required to register. For admins, if this is
+    # left empty, registration is allowed only while no admin exists (bootstrap).
+    ADMIN_SIGNUP_CODE: str = ""
+    AUTHOR_SIGNUP_CODE: str = ""
 
     @property
     def is_production(self) -> bool:

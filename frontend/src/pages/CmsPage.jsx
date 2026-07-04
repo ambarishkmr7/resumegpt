@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { api } from "../api/client";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
+import Seo from "../components/Seo.jsx";
 import { ContactForm, FeedbackForm } from "../components/ContactForms.jsx";
 import { SkeletonBlock, SkeletonLine } from "../components/Skeleton.jsx";
 import Markdown from "../components/Markdown.jsx";
@@ -102,6 +103,16 @@ export default function CmsPage() {
       <div className="container cms-container">
         <Link to="/" className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }}>← Back</Link>
         {error && <div className="error">{error}</div>}
+        {page && (
+          <Seo
+            title={`${page.title.replace(/^[^\s]+\s/, "")} — resumes-gpt`}
+            description={(page.content || "")
+              .replace(/[#*_>`\-\[\]()!]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 155)}
+          />
+        )}
         {page && (
           <div className="cms-page">
             <h1 className="cms-title">{page.icon} {page.title.replace(/^[^\s]+\s/, "")}</h1>

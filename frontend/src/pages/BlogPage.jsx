@@ -1,77 +1,27 @@
 import { Link } from "react-router-dom";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
+import Seo from "../components/Seo.jsx";
+import { BLOG_POSTS, BLOG_CATEGORIES } from "../data/blogPosts.js";
 
-const POSTS = [
-  {
-    slug: "how-to-beat-ats-systems-2026",
-    tag: "ATS Tips",
-    title: "How to Beat ATS Systems in 2026: The Complete Guide",
-    excerpt:
-      "Over 98% of Fortune 500 companies use Applicant Tracking Systems to filter resumes before a human ever reads them. Learn exactly how ATS parsers work and what to do to pass every filter.",
-    date: "May 28, 2026",
-    readTime: "8 min",
-  },
-  {
-    slug: "resume-keywords-that-get-interviews",
-    tag: "Resume Writing",
-    title: "50 Power Keywords That Get Resumes Noticed by Recruiters",
-    excerpt:
-      "Action verbs and quantified achievements are the two biggest factors in resume impact. We analyzed 10,000 successful resumes to find the words that consistently land interviews.",
-    date: "May 20, 2026",
-    readTime: "6 min",
-  },
-  {
-    slug: "ai-resume-builder-vs-traditional",
-    tag: "Career Advice",
-    title: "AI Resume Builder vs Traditional Resume Writing: Which Wins in 2026?",
-    excerpt:
-      "AI-powered resume tools have matured dramatically. We compare AI builders against professional resume writers across cost, quality, speed, and ATS compatibility.",
-    date: "May 15, 2026",
-    readTime: "10 min",
-  },
-  {
-    slug: "freshers-resume-guide-india",
-    tag: "Freshers",
-    title: "The Definitive Fresher Resume Guide for Indian Job Market 2026",
-    excerpt:
-      "No work experience? No problem. This guide covers exactly what to put on your first resume, which sections matter most for Indian recruiters, and how to get shortlisted even without experience.",
-    date: "May 10, 2026",
-    readTime: "12 min",
-  },
-  {
-    slug: "salary-negotiation-india-2026",
-    tag: "Career Growth",
-    title: "Salary Negotiation in India: How to Ask for 30–50% More and Get It",
-    excerpt:
-      "Most professionals leave ₹5–15 lakhs on the table each year by not negotiating. Learn the exact scripts, timing, and tactics that work with Indian employers in 2026.",
-    date: "May 5, 2026",
-    readTime: "9 min",
-  },
-  {
-    slug: "cover-letter-templates-india",
-    tag: "Cover Letters",
-    title: "7 Cover Letter Templates That Actually Work for Indian Job Applications",
-    excerpt:
-      "A great cover letter can double your interview rate. Here are 7 templates tailored to common Indian job scenarios — IT, banking, consulting, startups, and more — with real examples.",
-    date: "April 28, 2026",
-    readTime: "7 min",
-  },
-];
+const POSTS = BLOG_POSTS;
 
 const TAG_COLORS = {
-  "ATS Tips": "#d97706",
-  "Resume Writing": "#0369a1",
-  "Career Advice": "#7c3d12",
-  "Freshers": "#166534",
+  "Resume Basics": "#0369a1",
+  "ATS": "#d97706",
+  "Job-Specific": "#166534",
   "Career Growth": "#6d28d9",
-  "Cover Letters": "#be185d",
+  "AI & Hiring": "#be185d",
 };
 
 export default function BlogPage() {
   return (
     <>
       <Topbar />
+      <Seo
+        title="Resume & Career Blog — Tips, ATS Guides & Examples | resumes-gpt"
+        description="Expert resume writing tips, ATS guides, job-specific resume examples, and AI hiring insights — updated for 2026."
+      />
 
       {/* ── Hero ── */}
       <section className="blog-hero" style={{ background: "linear-gradient(135deg,#1a1a1a,#2d1810)", color: "#fff", padding: "48px 24px", textAlign: "center" }}>
@@ -102,31 +52,41 @@ export default function BlogPage() {
 
       {/* ── Blog Grid ── */}
       <div className="blog-grid" style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px" }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Latest Articles</h2>
-        <div className="blog-grid-inner" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 24 }}>
-          {POSTS.map((post) => (
-            <article key={post.slug} style={{
-              background: "#fff", border: "1px solid #e2dccf", borderRadius: 14,
-              padding: 24, display: "flex", flexDirection: "column", gap: 10
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{
-                  fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
-                  background: TAG_COLORS[post.tag] || "#7c3a1e", color: "#fff", letterSpacing: 0.5
-                }}>{post.tag}</span>
-                <span style={{ fontSize: 12, color: "#57514a" }}>{post.readTime} read</span>
+        {BLOG_CATEGORIES.map((cat) => {
+          const items = POSTS.filter((p) => p.tag === cat);
+          if (!items.length) return null;
+          return (
+            <div key={cat} style={{ marginBottom: 40 }}>
+              <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20 }}>{cat}</h2>
+              <div className="blog-grid-inner" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 24 }}>
+                {items.map((post) => (
+                  <article key={post.slug} style={{
+                    background: "#fff", border: "1px solid #e2dccf", borderRadius: 14,
+                    padding: 24, display: "flex", flexDirection: "column", gap: 10
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
+                        background: TAG_COLORS[post.tag] || "#7c3a1e", color: "#fff", letterSpacing: 0.5
+                      }}>{post.tag}</span>
+                      <span style={{ fontSize: 12, color: "#57514a" }}>{post.readTime} read</span>
+                    </div>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.4, margin: 0 }}>
+                      <Link to={`/blog/${post.slug}`} style={{ color: "inherit", textDecoration: "none" }}>{post.title}</Link>
+                    </h3>
+                    <p style={{ fontSize: 14, color: "#57514a", lineHeight: 1.6, margin: 0, flex: 1 }}>{post.excerpt}</p>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                      <span style={{ fontSize: 12, color: "#9ca3af" }}>{post.date}</span>
+                      <Link to={`/blog/${post.slug}`} style={{
+                        fontSize: 13, fontWeight: 600, color: "#b45309", textDecoration: "none"
+                      }}>Read more →</Link>
+                    </div>
+                  </article>
+                ))}
               </div>
-              <h3 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.4, margin: 0 }}>{post.title}</h3>
-              <p style={{ fontSize: 14, color: "#57514a", lineHeight: 1.6, margin: 0, flex: 1 }}>{post.excerpt}</p>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-                <span style={{ fontSize: 12, color: "#9ca3af" }}>{post.date}</span>
-                <Link to={`/page/blog`} style={{
-                  fontSize: 13, fontWeight: 600, color: "#b45309", textDecoration: "none"
-                }}>Read more →</Link>
-              </div>
-            </article>
-          ))}
-        </div>
+            </div>
+          );
+        })}
 
         {/* ── SEO CTA ── */}
         <div className="blog-cta" style={{

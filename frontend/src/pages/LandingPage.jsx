@@ -7,6 +7,8 @@ import Footer from "../components/Footer.jsx";
 import SubscriptionModal from "../components/SubscriptionModal.jsx";
 import AdCarousel from "../components/AdCarousel.jsx";
 import ProcessingOverlay from "../components/ProcessingOverlay.jsx";
+import ResumeTemplatesPanel from "../components/ResumeTemplatesPanel.jsx";
+import { parseSubscription } from "../utils/subscriptionContent";
 import "../../public/css/style.css";
 
 export default function LandingPage() {
@@ -24,6 +26,11 @@ export default function LandingPage() {
   const fileRef = useRef();
   const [siteStats, setSiteStats] = useState({ total_resumes: null, ats_pass_rate: null });
   const [resumes, setResumes] = useState([]);
+  // Homepage Elite plan content comes from cms_pages record 'cms_sub'.
+  const [subContent, setSubContent] = useState(null);
+  const parsedSub = parseSubscription(subContent);
+  const elitePrice = parsedSub.price || "1,999";
+  const eliteFeatures = parsedSub.features.length ? parsedSub.features : null;
 
   const loadResumes = () => {
     if (user) api.listResumes().then(setResumes).catch(() => {});
@@ -31,11 +38,27 @@ export default function LandingPage() {
 
   useEffect(() => {
     api.getPublicStats().then(setSiteStats).catch(() => {});
+    api.getSubscriptionContent().then((d) => setSubContent(d && d.content)).catch(() => {});
     if (user) {
       api.subscriptionStatus().then(setSubStatus).catch(() => {});
       api.listResumes().then(setResumes).catch(() => {});
     }
   }, [user]);
+
+  // After picking a template we navigate to /?picked=1#my-resumes — scroll the
+  // newly added resume into view once the list has loaded.
+  useEffect(() => {
+    if (!user) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("picked") !== "1") return;
+    if (resumes.length === 0) return;
+    const el = document.getElementById("my-resumes");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Clean the URL so a refresh doesn't re-trigger the scroll.
+      window.history.replaceState({}, "", "/");
+    }
+  }, [user, resumes]);
 
   const isSubscribed = subStatus?.is_subscribed;
 
@@ -139,9 +162,12 @@ export default function LandingPage() {
 
         <div className="container" style={{ flex: 1, minWidth: 0 }}>
 
+          {/* Free resume templates */}
+          <ResumeTemplatesPanel />
+
           {/* My Resumes — shown only for logged-in users */}
           {user && resumes.length > 0 && (
-            <section className="section">
+            <section className="section" id="my-resumes">
               <h2 className="section-title">My Resumes</h2>
               <div className="resume-grid">
                 {resumes.map((r) => (
@@ -237,16 +263,23 @@ export default function LandingPage() {
               <div className={`plan-box elite ${isSubscribed ? "current" : ""}`}>
                 <div className="plan-box-popular">✨ LIFETIME ACCESS</div>
                 <div className="plan-box-name">Elite</div>
-                <div className="plan-box-price"><span>₹</span>1,999</div>
+                <div className="plan-box-price"><span>₹</span>{elitePrice}</div>
                 <div className="plan-box-period">one-time · lifetime</div>
                 <ul className="plan-box-features">
-                  <li>✓ Everything in Free</li>
-                  <li>✓ Job search &amp; Posting agent</li>
-                  <li>✓ 🤖 AI Career Counseling Bot</li>
-                  <li>✓ 🎤 Mock Interview Practice</li>
-                  <li>✓ 📊 Interview Gap Analysis</li>
-                  <li>✓ 🚀 AI Job Application Agent</li>
-                  <li>✓ Priority support &amp; early access</li>
+                  {eliteFeatures ? (
+                    eliteFeatures.map((f, i) => <li key={i}>✓ {f}</li>)
+                  ) : (
+                    <>
+                      <li>✓ Everything in Free</li>
+                      <li>✓ Job search &amp; Posting agent</li>
+                      <li>✓ 🤖 AI Career Counseling Bot</li>
+                      <li>✓ 🎤 Mock Interview Practice</li>
+                      <li>✓ 📚 Learning Materials — skill-based Q&amp;A</li>
+                      <li>✓ 📊 Interview Gap Analysis</li>
+                      <li>✓ 🚀 AI Job Application Agent</li>
+                      <li>✓ Priority support &amp; early access</li>
+                    </>
+                  )}
                 </ul>
                 {isSubscribed ? (
                   <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
@@ -264,15 +297,16 @@ export default function LandingPage() {
           </section>
 
           {/* Elite features */}
-          <section className="section">
+          <section className="section" id="elite-features">
             <h2 className="section-title">✨ Elite AI Features</h2>
             <p className="section-sub">Advanced AI-powered career tools available in the Elite plan.</p>
             <div className="elite-features-grid">
               {[
                 { icon: "🤖", title: "AI Career Counseling Bot", desc: "Interactive AI career counselor that understands your resume, skills, and goals. Get personalized advice on salary negotiation, career transitions, upskilling, and job search strategy." },
                 { icon: "🎤", title: "Mock Interview Practice", desc: "AI generates role-specific interview questions (behavioral, technical, situational) tailored to your resume. Practice your answers and get instant feedback with scoring." },
+                { icon: "📚", title: "Learning Materials", desc: "Skill-based interview prep generated from your resume: solved questions & answers tailored to each of your skills, plus curated study resources. Download the full pack as a Markdown file." },
                 { icon: "📊", title: "Interview Rating & Gap Analysis", desc: "Each mock interview answer is scored 0-100 with detailed strengths, gaps, and a suggested ideal answer with references from industry-standard guides." },
-                { icon: "🚀", title: "AI Job Application Agent", desc: "AI agent searches relevant jobs across LinkedIn, Naukri, Indeed, and RemoteJobs.in. Generates tailored cover letters and prepares professional answers to common recruiter questions." },
+                { icon: "🚀", title: "AI Job Application Agent", desc: "AI agent finds relevant LinkedIn jobs matching your resume, generates tailored cover letters, and prepares professional answers to common recruiter questions — ready to apply on your behalf." },
               ].map((f, i) => (
                 <div
                   key={i}

@@ -139,6 +139,7 @@ npm run build
 # Output: frontend/dist/
 
 # 2. Start FastAPI (serves API + React app on port 8000)
+cd ..
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
