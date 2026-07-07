@@ -1,288 +1,135 @@
-"""Agent memory — MySQL-backed checkpointer and store.
+"""Agent memory — official LangGraph persistence.
 
-Two tables are created automatically in the application's MySQL database:
+Uses LangGraph's own production-grade, Postgres-backed implementations
+instead of a hand-rolled write-through cache:
 
-  agent_checkpoints  — conversation state (LangGraph checkpoints)
-  agent_store        — thread metadata (titles, last messages, etc.)
+  AsyncPostgresSaver  (langgraph.checkpoint.postgres.aio) — conversation
+                       state / checkpoints
+  AsyncPostgresStore  (langgraph.store.postgres.aio)      — thread metadata
+                       (titles, previews, etc.)
 
-Both classes wrap LangGraph's in-memory implementations and write through to
-MySQL so history survives server restarts.
+Docs: https://docs.langchain.com/oss/python/langgraph/persistence
+      https://reference.langchain.com/python/langgraph.checkpoint.postgres
+      https://reference.langchain.com/python/langgraph.store.postgres
+
+These manage their own schema (checkpoints/checkpoint_blobs/checkpoint_writes
+tables, store/store_migrations tables — created by `.setup()`), handle
+CheckpointMetadata correctly, and are what LangGraph itself recommends for
+production rather than a custom saver. Both packages are already in
+requirements.txt: `langgraph-checkpoint-postgres` and `psycopg[binary,pool]`
+(note: psycopg v3, a different driver from the psycopg2 SQLAlchemy uses
+elsewhere in this app — that's expected, they're independent).
+
+NOTE ON MIGRATION: this replaces the old custom `agent_checkpoints` /
+`agent_store` tables with LangGraph's own tables. Conversation history saved
+under the old scheme is not carried over — it's a clean break. The old
+tables are unused after this change and can be dropped once you've confirmed
+the new one works:
+    DROP TABLE IF EXISTS agent_checkpoints;
+    DROP TABLE IF EXISTS agent_store;
+
+If DATABASE_URL isn't Postgres, LangGraph has no official MySQL checkpointer,
+so we fall back to LangGraph's plain in-memory implementations — usable for
+local dev, but conversation history won't survive a server restart.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import re
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="agent-db")
-
-_engine = None
+_pool = None
 _checkpointer = None
 _store = None
 
 
-# ── Database bootstrap ────────────────────────────────────────────────────────
+def _dialect() -> str:
+    url = get_settings().database_url
+    if url.startswith("postgresql"):
+        return "postgresql"
+    if url.startswith("mysql"):
+        return "mysql"
+    return "sqlite"
 
-def _get_engine():
-    global _engine
-    if _engine is not None:
-        return _engine
-    from sqlalchemy import create_engine
-    _engine = create_engine(
-        get_settings().database_url,
-        pool_pre_ping=True,
-        pool_recycle=3600,
+
+def _psycopg_dsn(database_url: str) -> str:
+    """SQLAlchemy URLs look like 'postgresql+psycopg2://user:pass@host/db'.
+    psycopg (v3, used by langgraph-checkpoint-postgres) wants the driver
+    suffix stripped: 'postgresql://user:pass@host/db'."""
+    return re.sub(r"^postgresql\+\w+://", "postgresql://", database_url)
+
+
+async def _get_pool():
+    """A single shared async connection pool, opened lazily and reused for
+    both the checkpointer and the store, kept open for the process's life."""
+    global _pool
+    if _pool is not None:
+        return _pool
+    from psycopg_pool import AsyncConnectionPool
+
+    dsn = _psycopg_dsn(get_settings().database_url)
+    _pool = AsyncConnectionPool(
+        conninfo=dsn,
+        max_size=10,
+        open=False,
+        kwargs={"autocommit": True, "prepare_threshold": 0},
     )
-    _init_tables(_engine)
-    return _engine
+    await _pool.open()
+    return _pool
 
-
-def _init_tables(engine) -> None:
-    from sqlalchemy import text
-    with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS agent_checkpoints (
-                thread_id     VARCHAR(255) NOT NULL,
-                checkpoint_ns VARCHAR(255) NOT NULL DEFAULT '',
-                checkpoint_id VARCHAR(255) NOT NULL,
-                parent_id     VARCHAR(255),
-                type_col      VARCHAR(64)  NOT NULL,
-                data_col      LONGBLOB     NOT NULL,
-                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """))
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS agent_store (
-                prefix_col  VARCHAR(255) NOT NULL,
-                key_col     VARCHAR(255) NOT NULL,
-                value_col   LONGTEXT     NOT NULL,
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (prefix_col, key_col)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """))
-    logger.info("Agent memory tables ready (MySQL)")
-
-
-async def _run(fn, *args):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, fn, *args)
-
-
-# ── MySQLSaver ────────────────────────────────────────────────────────────────
-
-def _build_saver(engine):
-    """Return a MemorySaver that writes checkpoints through to MySQL."""
-    from langgraph.checkpoint.memory import MemorySaver
-    from sqlalchemy import text
-
-    class MySQLSaver(MemorySaver):
-        def __init__(self):
-            super().__init__()
-            self._db = engine
-            self._restore()
-
-        # ── startup restore ──────────────────────────────────────────────────
-
-        def _restore(self):
-            try:
-                with self._db.connect() as conn:
-                    rows = conn.execute(text(
-                        "SELECT thread_id, checkpoint_ns, checkpoint_id, parent_id, "
-                        "type_col, data_col "
-                        "FROM agent_checkpoints ORDER BY checkpoint_id"
-                    )).fetchall()
-
-                for tid, ns, cid, pid, ttype, data in rows:
-                    try:
-                        chk = self.serde.loads_typed((ttype, bytes(data)))
-                        # Call MemorySaver.put directly to skip our override
-                        # config.checkpoint_id = parent's id (how MemorySaver tracks lineage)
-                        MemorySaver.put(
-                            self,
-                            {"configurable": {
-                                "thread_id": tid,
-                                "checkpoint_ns": ns,
-                                "checkpoint_id": pid or "",
-                            }},
-                            chk, {}, {},
-                        )
-                    except Exception as exc:
-                        logger.debug("Skip checkpoint %s/%s: %s", tid, cid, exc)
-
-                if rows:
-                    logger.info("Restored %d checkpoints from MySQL", len(rows))
-            except Exception as exc:
-                logger.warning("Checkpoint restore failed: %s", exc)
-
-        # ── write-through put ────────────────────────────────────────────────
-
-        def put(self, config, checkpoint, metadata, new_versions):
-            result = MemorySaver.put(self, config, checkpoint, metadata, new_versions)
-            try:
-                tid   = config["configurable"]["thread_id"]
-                ns    = config["configurable"].get("checkpoint_ns", "")
-                cid   = checkpoint["id"]
-                pid   = config["configurable"].get("checkpoint_id")
-                ttype, data = self.serde.dumps_typed(checkpoint)
-                with self._db.begin() as conn:
-                    conn.execute(text("""
-                        INSERT INTO agent_checkpoints
-                            (thread_id, checkpoint_ns, checkpoint_id,
-                             parent_id, type_col, data_col)
-                        VALUES (:tid, :ns, :cid, :pid, :tt, :data)
-                        ON DUPLICATE KEY UPDATE
-                            type_col = VALUES(type_col),
-                            data_col = VALUES(data_col)
-                    """), {"tid": tid, "ns": ns, "cid": cid,
-                           "pid": pid, "tt": ttype, "data": data})
-            except Exception as exc:
-                logger.warning("Failed to persist checkpoint: %s", exc)
-            return result
-
-        async def aput(self, config, checkpoint, metadata, new_versions):
-            return await _run(self.put, config, checkpoint, metadata, new_versions)
-
-        # ── delete ───────────────────────────────────────────────────────────
-
-        async def adelete(self, config):
-            tid = config["configurable"]["thread_id"]
-            ns  = config["configurable"].get("checkpoint_ns", "")
-
-            def _del():
-                with self._db.begin() as conn:
-                    conn.execute(text(
-                        "DELETE FROM agent_checkpoints "
-                        "WHERE thread_id = :tid AND checkpoint_ns = :ns"
-                    ), {"tid": tid, "ns": ns})
-
-            await _run(_del)
-
-    return MySQLSaver()
-
-
-# ── MySQLStore ────────────────────────────────────────────────────────────────
-
-def _build_store(engine):
-    """Return an InMemoryStore that writes items through to MySQL."""
-    from langgraph.store.memory import InMemoryStore
-    from sqlalchemy import text
-
-    class MySQLStore(InMemoryStore):
-        def __init__(self):
-            super().__init__()
-            self._db = engine
-            self._restore()
-
-        @staticmethod
-        def _prefix(namespace: tuple) -> str:
-            return "/".join(str(n) for n in namespace)
-
-        # ── startup restore ──────────────────────────────────────────────────
-
-        def _restore(self):
-            try:
-                with self._db.connect() as conn:
-                    rows = conn.execute(text(
-                        "SELECT prefix_col, key_col, value_col FROM agent_store"
-                    )).fetchall()
-
-                if not rows:
-                    return
-
-                # Populate in-memory store using parent's batch (no write-back)
-                # Build PutOp list — try official import first, duck-type fallback
-                put_ops = []
-                for prefix, key, val_json in rows:
-                    ns = tuple(prefix.split("/"))
-                    try:
-                        value = json.loads(val_json)
-                        put_ops.append((ns, key, value))
-                    except Exception:
-                        pass
-
-                try:
-                    from langgraph.store.base import PutOp
-                    ops = [PutOp(namespace=ns, key=k, value=v) for ns, k, v in put_ops]
-                    InMemoryStore.batch(self, ops)
-                except Exception:
-                    # Fallback: write to .data dict directly if accessible
-                    from datetime import datetime, timezone
-                    now = datetime.now(timezone.utc)
-                    try:
-                        from langgraph.store.base import Item
-                        for ns, key, value in put_ops:
-                            if hasattr(self, "data"):
-                                self.data[ns][key] = Item(
-                                    value=value, key=key, namespace=ns,
-                                    created_at=now, updated_at=now,
-                                )
-                    except Exception as exc2:
-                        logger.debug("Store preload inner fallback: %s", exc2)
-
-                logger.info("Restored %d store items from MySQL", len(rows))
-            except Exception as exc:
-                logger.warning("Store restore failed: %s", exc)
-
-        # ── write-through batch ──────────────────────────────────────────────
-
-        def batch(self, ops):
-            results = InMemoryStore.batch(self, ops)
-            try:
-                with self._db.begin() as conn:
-                    for op in ops:
-                        op_type = type(op).__name__
-                        if op_type == "PutOp":
-                            conn.execute(text("""
-                                INSERT INTO agent_store
-                                    (prefix_col, key_col, value_col)
-                                VALUES (:p, :k, :v)
-                                ON DUPLICATE KEY UPDATE
-                                    value_col  = VALUES(value_col),
-                                    updated_at = CURRENT_TIMESTAMP
-                            """), {
-                                "p": self._prefix(op.namespace),
-                                "k": op.key,
-                                "v": json.dumps(op.value),
-                            })
-                        elif op_type == "DeleteOp":
-                            conn.execute(text(
-                                "DELETE FROM agent_store "
-                                "WHERE prefix_col = :p AND key_col = :k"
-                            ), {
-                                "p": self._prefix(op.namespace),
-                                "k": op.key,
-                            })
-            except Exception as exc:
-                logger.warning("Failed to persist store op: %s", exc)
-            return results
-
-        async def abatch(self, ops):
-            return await _run(self.batch, ops)
-
-    return MySQLStore()
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 async def get_checkpointer():
     global _checkpointer
-    if _checkpointer is None:
-        _checkpointer = _build_saver(_get_engine())
-        logger.info("Agent checkpointer: MySQL-backed")
+    if _checkpointer is not None:
+        return _checkpointer
+
+    if _dialect() == "postgresql":
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        pool = await _get_pool()
+        saver = AsyncPostgresSaver(pool)
+        await saver.setup()  # creates/migrates checkpoints, checkpoint_blobs, checkpoint_writes — idempotent
+        _checkpointer = saver
+        logger.info("Agent checkpointer: AsyncPostgresSaver (official, Postgres-backed)")
+    else:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        logger.warning(
+            "Agent checkpointer: in-memory only (DATABASE_URL dialect=%s). "
+            "LangGraph has no official MySQL checkpointer, so conversation "
+            "history will NOT survive a server restart. Use a Postgres "
+            "DATABASE_URL for persistence.",
+            _dialect(),
+        )
+        _checkpointer = MemorySaver()
     return _checkpointer
 
 
 async def get_store():
     global _store
-    if _store is None:
-        _store = _build_store(_get_engine())
-        logger.info("Agent store: MySQL-backed")
+    if _store is not None:
+        return _store
+
+    if _dialect() == "postgresql":
+        from langgraph.store.postgres.aio import AsyncPostgresStore
+
+        pool = await _get_pool()
+        store = AsyncPostgresStore(pool)
+        await store.setup()  # creates/migrates store, store_migrations — idempotent
+        _store = store
+        logger.info("Agent store: AsyncPostgresStore (official, Postgres-backed)")
+    else:
+        from langgraph.store.memory import InMemoryStore
+
+        logger.warning(
+            "Agent store: in-memory only (DATABASE_URL dialect=%s). Thread "
+            "titles/previews will NOT survive a server restart. Use a "
+            "Postgres DATABASE_URL for persistence.",
+            _dialect(),
+        )
+        _store = InMemoryStore()
     return _store

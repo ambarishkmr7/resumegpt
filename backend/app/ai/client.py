@@ -12,6 +12,7 @@ import logging
 
 import httpx
 
+from app.ai import usage_tracker
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -35,14 +36,15 @@ def available() -> bool:
 
 # ── Anthropic Claude ─────────────────────────────────────────────────────────
 
-def _anthropic(prompt: str, system: str, max_tokens: int) -> str:
+def _anthropic(prompt: str, system: str, max_tokens: int) -> tuple[str, dict]:
     headers = {
         "x-api-key": settings.ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
+    model = settings.AI_MODEL if (settings.AI_MODEL or "").startswith("claude") else "claude-sonnet-4-20250514"
     body = {
-        "model": settings.AI_MODEL if (settings.AI_MODEL or "").startswith("claude") else "claude-sonnet-4-20250514",
+        "model": model,
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
@@ -52,12 +54,22 @@ def _anthropic(prompt: str, system: str, max_tokens: int) -> str:
         resp = c.post(ANTHROPIC_URL, headers=headers, json=body)
         resp.raise_for_status()
     data = resp.json()
-    return "".join(b.get("text", "") for b in data.get("content", []))
+    text = "".join(b.get("text", "") for b in data.get("content", []))
+    # https://docs.claude.com/en/api/messages — usage.input_tokens / output_tokens
+    usage = data.get("usage") or {}
+    return text, {
+        "provider": "anthropic",
+        "model": model,
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+        "cached_tokens": usage.get("cache_read_input_tokens", 0),
+    }
 
 
 # ── Google Gemini ────────────────────────────────────────────────────────────
 
-def _gemini(prompt: str, system: str, max_tokens: int) -> str:
+def _gemini(prompt: str, system: str, max_tokens: int) -> tuple[str, dict]:
+    model = "gemini-3.1-flash-lite"
     url = f"{GEMINI_URL}?key={settings.GEMINI_API_KEY}"
     contents = []
     if system:
@@ -73,25 +85,36 @@ def _gemini(prompt: str, system: str, max_tokens: int) -> str:
         resp.raise_for_status()
     data = resp.json()
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError):
-        return ""
+        text = ""
+    # https://ai.google.dev/gemini-api/docs/tokens — usageMetadata on the response
+    usage = data.get("usageMetadata") or {}
+    return text, {
+        "provider": "gemini",
+        "model": model,
+        "input_tokens": usage.get("promptTokenCount", 0),
+        "output_tokens": usage.get("candidatesTokenCount", 0),
+        "cached_tokens": usage.get("cachedContentTokenCount", 0),
+        "thoughts_tokens": usage.get("thoughtsTokenCount", 0),
+    }
 
 
 # ── xAI Grok ─────────────────────────────────────────────────────────────────
 
-def _grok(prompt: str, system: str, max_tokens: int) -> str:
+def _grok(prompt: str, system: str, max_tokens: int) -> tuple[str, dict]:
     """Grok uses the OpenAI-compatible chat completions format."""
     headers = {
         "Authorization": f"Bearer {settings.GROK_API_KEY}",
         "Content-Type": "application/json",
     }
+    model = settings.GROK_MODEL or "grok-3-mini"
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     body = {
-        "model": settings.GROK_MODEL or "grok-3-mini",
+        "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.7,
@@ -100,15 +123,46 @@ def _grok(prompt: str, system: str, max_tokens: int) -> str:
         resp = c.post(GROK_URL, headers=headers, json=body)
         resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    text = data["choices"][0]["message"]["content"]
+    # OpenAI-compatible: usage.prompt_tokens / completion_tokens
+    usage = data.get("usage") or {}
+    return text, {
+        "provider": "grok",
+        "model": model,
+        "input_tokens": usage.get("prompt_tokens", 0),
+        "output_tokens": usage.get("completion_tokens", 0),
+    }
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def complete(prompt: str, system: str = "", max_tokens: int = 1500) -> str:
+def _log_usage(usage: dict, purpose: str, modality: str) -> None:
+    try:
+        usage_tracker.record_usage(
+            provider=usage.get("provider", "unknown"),
+            model=usage.get("model"),
+            modality=modality,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cached_tokens=usage.get("cached_tokens", 0),
+            thoughts_tokens=usage.get("thoughts_tokens", 0),
+            purpose=purpose,
+        )
+    except Exception:
+        logger.exception("Usage logging failed for provider=%s", usage.get("provider"))
+
+
+def complete(prompt: str, system: str = "", max_tokens: int = 1500, purpose: str = None, modality: str = "text") -> str:
     """Try providers in order: Anthropic → Gemini → Grok.
     Falls through to the next provider on quota/rate-limit errors (429/529/503).
     Raises RuntimeError only if every configured provider fails.
+
+    `purpose` tags this call for the admin usage dashboard (e.g. "cover_letter").
+    If omitted, falls back to the current request's contextvar tag (see
+    app/core/llm_context.py::set_purpose), or "general". `modality` describes
+    what kind of input dominated this prompt (text/image/audio/video/document)
+    for cost-per-modality accounting — nearly all calls through this function
+    are plain text prompts, so it defaults to "text".
     """
     last_err = None
 
@@ -116,7 +170,9 @@ def complete(prompt: str, system: str = "", max_tokens: int = 1500) -> str:
     if settings.ANTHROPIC_API_KEY:
         try:
             logger.debug("Trying Anthropic Claude for AI completion")
-            return _anthropic(prompt, system, max_tokens)
+            text, usage = _anthropic(prompt, system, max_tokens)
+            _log_usage(usage, purpose, modality)
+            return text
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _QUOTA_CODES:
                 logger.warning("Anthropic quota/rate-limit (HTTP %d) — falling back", e.response.status_code)
@@ -132,7 +188,9 @@ def complete(prompt: str, system: str = "", max_tokens: int = 1500) -> str:
     if settings.GEMINI_API_KEY:
         try:
             logger.debug("Trying Google Gemini for AI completion")
-            return _gemini(prompt, system, max_tokens)
+            text, usage = _gemini(prompt, system, max_tokens)
+            _log_usage(usage, purpose, modality)
+            return text
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _QUOTA_CODES:
                 logger.warning("Gemini quota/rate-limit (HTTP %d) — falling back", e.response.status_code)
@@ -148,7 +206,9 @@ def complete(prompt: str, system: str = "", max_tokens: int = 1500) -> str:
     if settings.GROK_API_KEY:
         try:
             logger.debug("Trying xAI Grok for AI completion")
-            return _grok(prompt, system, max_tokens)
+            text, usage = _grok(prompt, system, max_tokens)
+            _log_usage(usage, purpose, modality)
+            return text
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _QUOTA_CODES:
                 logger.warning("Grok quota/rate-limit (HTTP %d) — falling back", e.response.status_code)
@@ -167,9 +227,9 @@ def complete(prompt: str, system: str = "", max_tokens: int = 1500) -> str:
     )
 
 
-def complete_json(prompt: str, system: str = "", max_tokens: int = 2000) -> dict:
+def complete_json(prompt: str, system: str = "", max_tokens: int = 2000, purpose: str = None, modality: str = "text") -> dict:
     """Ask the model for JSON and parse it, tolerating markdown code fences."""
-    raw = complete(prompt, system=system, max_tokens=max_tokens).strip()
+    raw = complete(prompt, system=system, max_tokens=max_tokens, purpose=purpose, modality=modality).strip()
     if raw.startswith("```"):
         raw = raw.split("```", 2)[1]
         if raw.startswith("json"):

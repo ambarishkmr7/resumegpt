@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from app.core.deps import get_current_user
 from app.database import get_db
-from app.models import User, Resume, Subscription, CmsPage, VisitorLog, Payment
+from app.models import User, Resume, Subscription, CmsPage, VisitorLog, Payment, LlmUsageLog
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -250,6 +250,188 @@ def list_payments(user: User = Depends(require_admin), db: Session = Depends(get
         plan=p.plan, amount=p.amount, currency=p.currency,
         status=p.status, created_at=p.created_at.isoformat() if p.created_at else None,
     ) for p in payments]
+
+
+# ---------- LLM Usage & Cost Tracking ----------
+
+class LlmUsageSummary(BaseModel):
+    total_calls: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cached_tokens: int = 0
+    total_thoughts_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    currency: str = "USD"
+    by_purpose: List[dict] = []
+    by_modality: List[dict] = []
+    by_provider: List[dict] = []
+    daily: List[dict] = []
+
+
+class LlmUserUsage(BaseModel):
+    user_id: Optional[str] = None
+    user_email: str = ""
+    total_calls: int = 0
+    total_tokens: int = 0
+    total_cost_usd: float = 0.0
+    last_used_at: Optional[str] = None
+
+
+class LlmUsageLogOut(BaseModel):
+    id: str
+    user_id: Optional[str] = None
+    user_email: str = ""
+    purpose: str
+    provider: str
+    model: Optional[str] = None
+    modality: str
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    thoughts_tokens: int
+    total_tokens: int
+    cost_usd: float
+    currency: str
+    created_at: Optional[str] = None
+
+
+def _usage_query(db: Session, days: Optional[int], purpose: Optional[str], provider: Optional[str]):
+    q = db.query(LlmUsageLog)
+    if days:
+        q = q.filter(LlmUsageLog.created_at >= datetime.utcnow() - timedelta(days=days))
+    if purpose:
+        q = q.filter(LlmUsageLog.purpose == purpose)
+    if provider:
+        q = q.filter(LlmUsageLog.provider == provider)
+    return q
+
+
+@router.get("/llm-usage/summary", response_model=LlmUsageSummary)
+def llm_usage_summary(
+    days: int = Query(30, ge=1, le=365, description="Look back this many days (0 = all time)"),
+    user: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    """Aggregate token usage + cost across all LLM calls — the top-level
+    numbers for the admin 'LLM Usage' tab, plus breakdowns by purpose
+    (which feature triggered the call), modality (text/image/audio/video/
+    document — since each is billed differently), and provider."""
+    since = datetime.utcnow() - timedelta(days=days)
+    base = db.query(LlmUsageLog).filter(LlmUsageLog.created_at >= since)
+
+    totals = base.with_entities(
+        func.count(LlmUsageLog.id),
+        func.coalesce(func.sum(LlmUsageLog.input_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.output_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.cached_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.thoughts_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.total_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.cost_usd), 0.0),
+    ).first()
+
+    by_purpose = [
+        {"purpose": p, "calls": c, "tokens": int(t or 0), "cost_usd": round(float(cost or 0), 6)}
+        for p, c, t, cost in base.with_entities(
+            LlmUsageLog.purpose, func.count(LlmUsageLog.id),
+            func.sum(LlmUsageLog.total_tokens), func.sum(LlmUsageLog.cost_usd),
+        ).group_by(LlmUsageLog.purpose).order_by(func.sum(LlmUsageLog.cost_usd).desc()).all()
+    ]
+    by_modality = [
+        {"modality": m, "calls": c, "tokens": int(t or 0), "cost_usd": round(float(cost or 0), 6)}
+        for m, c, t, cost in base.with_entities(
+            LlmUsageLog.modality, func.count(LlmUsageLog.id),
+            func.sum(LlmUsageLog.total_tokens), func.sum(LlmUsageLog.cost_usd),
+        ).group_by(LlmUsageLog.modality).order_by(func.sum(LlmUsageLog.cost_usd).desc()).all()
+    ]
+    by_provider = [
+        {"provider": pr, "calls": c, "tokens": int(t or 0), "cost_usd": round(float(cost or 0), 6)}
+        for pr, c, t, cost in base.with_entities(
+            LlmUsageLog.provider, func.count(LlmUsageLog.id),
+            func.sum(LlmUsageLog.total_tokens), func.sum(LlmUsageLog.cost_usd),
+        ).group_by(LlmUsageLog.provider).order_by(func.sum(LlmUsageLog.cost_usd).desc()).all()
+    ]
+    daily = [
+        {"date": str(d), "calls": c, "cost_usd": round(float(cost or 0), 6)}
+        for d, c, cost in base.with_entities(
+            func.date(LlmUsageLog.created_at), func.count(LlmUsageLog.id), func.sum(LlmUsageLog.cost_usd),
+        ).group_by(func.date(LlmUsageLog.created_at)).order_by(func.date(LlmUsageLog.created_at)).all()
+    ]
+
+    return LlmUsageSummary(
+        total_calls=totals[0] or 0,
+        total_input_tokens=int(totals[1] or 0),
+        total_output_tokens=int(totals[2] or 0),
+        total_cached_tokens=int(totals[3] or 0),
+        total_thoughts_tokens=int(totals[4] or 0),
+        total_tokens=int(totals[5] or 0),
+        total_cost_usd=round(float(totals[6] or 0), 6),
+        by_purpose=by_purpose,
+        by_modality=by_modality,
+        by_provider=by_provider,
+        daily=daily,
+    )
+
+
+@router.get("/llm-usage/by-user", response_model=List[LlmUserUsage])
+def llm_usage_by_user(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    user: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    """Per-user token/cost breakdown — 'which user has how much usage'."""
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(
+            LlmUsageLog.user_id,
+            func.count(LlmUsageLog.id),
+            func.coalesce(func.sum(LlmUsageLog.total_tokens), 0),
+            func.coalesce(func.sum(LlmUsageLog.cost_usd), 0.0),
+            func.max(LlmUsageLog.created_at),
+        )
+        .filter(LlmUsageLog.created_at >= since)
+        .group_by(LlmUsageLog.user_id)
+        .order_by(func.sum(LlmUsageLog.cost_usd).desc())
+        .limit(limit)
+        .all()
+    )
+    user_ids = [r[0] for r in rows if r[0]]
+    emails = {u.id: u.email for u in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    return [
+        LlmUserUsage(
+            user_id=uid, user_email=emails.get(uid, "" if uid else "(unattributed)"),
+            total_calls=calls, total_tokens=int(tokens or 0), total_cost_usd=round(float(cost or 0), 6),
+            last_used_at=last.isoformat() if last else None,
+        )
+        for uid, calls, tokens, cost, last in rows
+    ]
+
+
+@router.get("/llm-usage/logs", response_model=List[LlmUsageLogOut])
+def llm_usage_logs(
+    days: int = Query(7, ge=1, le=365),
+    purpose: Optional[str] = Query(None),
+    provider: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    """Raw recent call log, filterable — for auditing individual calls."""
+    q = _usage_query(db, days, purpose, provider)
+    if user_id:
+        q = q.filter(LlmUsageLog.user_id == user_id)
+    rows = q.order_by(LlmUsageLog.created_at.desc()).limit(limit).all()
+    user_ids = [r.user_id for r in rows if r.user_id]
+    emails = {u.id: u.email for u in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    return [
+        LlmUsageLogOut(
+            id=r.id, user_id=r.user_id, user_email=emails.get(r.user_id, ""),
+            purpose=r.purpose, provider=r.provider, model=r.model, modality=r.modality,
+            input_tokens=r.input_tokens, output_tokens=r.output_tokens,
+            cached_tokens=r.cached_tokens, thoughts_tokens=r.thoughts_tokens,
+            total_tokens=r.total_tokens, cost_usd=r.cost_usd, currency=r.currency,
+            created_at=r.created_at.isoformat() if r.created_at else None,
+        ) for r in rows
+    ]
 
 
 # ---------- Make first user admin (admin-only) ----------

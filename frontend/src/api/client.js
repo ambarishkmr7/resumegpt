@@ -418,6 +418,19 @@ export const api = {
   adminPayments: () =>
     fetch(`${BASE}/api/admin/payments`, { headers: authHeaders() }).then(handle),
 
+  // ---- Admin: LLM Usage ----
+  adminLlmUsageSummary: (days = 30) =>
+    fetch(`${BASE}/api/admin/llm-usage/summary?days=${days}`, { headers: authHeaders() }).then(handle),
+  adminLlmUsageByUser: (days = 30, limit = 50) =>
+    fetch(`${BASE}/api/admin/llm-usage/by-user?days=${days}&limit=${limit}`, { headers: authHeaders() }).then(handle),
+  adminLlmUsageLogs: ({ days = 7, purpose = "", provider = "", userId = "", limit = 100 } = {}) => {
+    const params = new URLSearchParams({ days: String(days), limit: String(limit) });
+    if (purpose) params.set("purpose", purpose);
+    if (provider) params.set("provider", provider);
+    if (userId) params.set("user_id", userId);
+    return fetch(`${BASE}/api/admin/llm-usage/logs?${params.toString()}`, { headers: authHeaders() }).then(handle);
+  },
+
   // ---- Public CMS ----
   trendingJobs: (resumeContent) =>
     fetch(`${BASE}/api/resumes/trending-jobs`, {

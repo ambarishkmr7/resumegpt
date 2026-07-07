@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 
 from app.agent.memory import get_checkpointer, get_store
+from app.ai import usage_tracker
 from app.config import get_settings
 from app.mcp_server import mcp as mcp_server
 
@@ -98,20 +99,76 @@ def _build_agent(checkpointer, store):
     tools = _get_mcp_tools()
     logger.info("Building agent with model=%s tools=%d", model_name, len(tools))
 
-    return create_agent(
+    agent = create_agent(
         model=llm,
         tools=tools,
         system_prompt=_SYSTEM_PROMPT,
         checkpointer=checkpointer,
         store=store,
     )
+    return agent, model_name
+
+
+def _provider_from_model_name(model_name: str) -> str:
+    """The agent's model string looks like 'google_genai:gemini-...' or
+    'anthropic:claude-...' (LangChain's init_chat_model provider prefix).
+    Map that prefix to the provider name used elsewhere in usage_tracker."""
+    prefix = model_name.split(":", 1)[0].lower() if ":" in model_name else ""
+    if "anthropic" in prefix or "claude" in model_name.lower():
+        return "anthropic"
+    if "google" in prefix or "gemini" in model_name.lower():
+        return "gemini"
+    if "grok" in model_name.lower() or "xai" in prefix:
+        return "grok"
+    return prefix or "unknown"
+
+
+def _log_chat_usage(messages: list, model_name: str, user_id: str) -> None:
+    """Sum token usage across every AI turn in this agent_chat() call (a
+    single user message can trigger several LLM turns via tool-calling) and
+    log it as one usage row. Each langchain AIMessage exposes a standardized
+    `usage_metadata` dict — {input_tokens, output_tokens, total_tokens,
+    input_token_details: {cache_read, cache_creation}, ...} — populated the
+    same way regardless of which provider is behind init_chat_model.
+    """
+    input_tokens = output_tokens = cached_tokens = 0
+    saw_usage = False
+    for m in messages:
+        if not isinstance(m, AIMessage):
+            continue
+        usage = getattr(m, "usage_metadata", None)
+        if not usage:
+            continue
+        saw_usage = True
+        input_tokens += usage.get("input_tokens", 0) or 0
+        output_tokens += usage.get("output_tokens", 0) or 0
+        details = usage.get("input_token_details") or {}
+        cached_tokens += (details.get("cache_read", 0) or 0) + (details.get("cache_creation", 0) or 0)
+
+    if not saw_usage:
+        logger.debug("No usage_metadata on any AIMessage — skipping chatbot usage log")
+        return
+
+    try:
+        usage_tracker.record_usage(
+            provider=_provider_from_model_name(model_name),
+            model=model_name,
+            modality="text",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+            purpose=usage_tracker.Purpose.CHATBOT,
+            user_id=user_id,
+        )
+    except Exception:
+        logger.exception("Usage logging failed for chatbot call")
 
 
 async def agent_chat(user_id: str, thread_id: str, message: str) -> dict[str, Any]:
     """Send a message to the agent and return the response."""
     checkpointer = await get_checkpointer()
     store = await get_store()
-    agent = _build_agent(checkpointer, store)
+    agent, model_name = _build_agent(checkpointer, store)
 
     config = {
         "configurable": {
@@ -126,7 +183,12 @@ async def agent_chat(user_id: str, thread_id: str, message: str) -> dict[str, An
     )
 
     messages = result.get("messages", [])
-    
+
+    # This turn may have made several LLM calls under the hood (tool-calling
+    # loops), each producing its own AIMessage with usage_metadata — log the
+    # combined token usage for the whole chatbot turn as one row.
+    _log_chat_usage(messages, model_name, user_id)
+
     last_ai = None
     for m in reversed(messages):
         if isinstance(m, AIMessage):

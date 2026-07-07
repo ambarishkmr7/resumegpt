@@ -109,11 +109,14 @@ async def delete_conversation(thread_id: str, user: User = Depends(get_current_u
     try:
         # 1. Delete thread metadata from the Store (removes it from the sidebar)
         await store.adelete(("agent_threads", user.id), thread_id)
-        
-        # 2. Try to delete the actual messages/checkpoints
-        if hasattr(checkpointer, 'adelete'):
-            await checkpointer.adelete({"configurable": {"thread_id": thread_id, "user_id": user.id}})
-            
+
+        # 2. Try to delete the actual messages/checkpoints. AsyncPostgresSaver
+        # exposes this as adelete_thread(thread_id) — takes just the thread_id,
+        # not a config dict (see langgraph.checkpoint.postgres.aio.AsyncPostgresSaver).
+        # The in-memory fallback (MemorySaver) doesn't implement this at all.
+        if hasattr(checkpointer, "adelete_thread"):
+            await checkpointer.adelete_thread(thread_id)
+
         return {"success": True}
     except Exception as exc:
         logger.exception("Failed to delete conversation")

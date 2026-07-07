@@ -711,6 +711,27 @@ input:focus, textarea:focus, select:focus {
 .plan-badge.pro { background: #dbeafe; color: #1e3a8a; }
 .plan-badge.elite { background: #fef3c7; color: #92400e; }
 
+/* LLM usage dashboard */
+.usage-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: capitalize; }
+.usage-badge.modality-text { background: #e0e7ff; color: #3730a3; }
+.usage-badge.modality-image { background: #fce7f3; color: #9d174d; }
+.usage-badge.modality-audio { background: #d1fae5; color: #065f46; }
+.usage-badge.modality-video { background: #fee2e2; color: #991b1b; }
+.usage-badge.modality-document { background: #fef3c7; color: #92400e; }
+.usage-badge.provider-anthropic { background: #f3e8ff; color: #6b21a8; }
+.usage-badge.provider-gemini { background: #dbeafe; color: #1e3a8a; }
+.usage-badge.provider-grok { background: #e5e7eb; color: #1f2937; }
+.usage-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+.usage-filters select, .usage-filters input { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); font-size: 13px; }
+.usage-breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.usage-breakdown-card { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.usage-breakdown-card h4 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); }
+.usage-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.usage-bar-label { flex: 0 0 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.usage-bar-track { flex: 1; background: var(--paper-2); border-radius: 4px; height: 8px; overflow: hidden; }
+.usage-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.usage-bar-value { flex: 0 0 auto; font-weight: 600; color: var(--ink); min-width: 70px; text-align: right; }
+
 /* CMS editor in admin */
 .cms-card { border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; background: var(--paper); }
 .cms-card-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }

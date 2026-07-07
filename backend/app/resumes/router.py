@@ -12,6 +12,7 @@ from app.ai import services as ai_services
 from app.ai import live_interview
 from app.config import get_settings
 from app.core.deps import get_current_user
+from app.core.llm_context import set_user
 from app.core.security import decode_token
 from app.database import get_db, SessionLocal
 from app.models import InterviewSession, Resume, User
@@ -150,8 +151,22 @@ def update_resume(resume_id: str, payload: ResumeUpdate,
 def delete_resume(resume_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     r = _get_owned(resume_id, user, db)
     storage_key = r.storage_key
-    db.delete(r); db.commit()
-    logger.info("Resume deleted: %s (user=%s)", resume_id, user.id)
+
+    # A resume can have recorded mock-interview sessions referencing it
+    # (interview_sessions.resume_id -> resumes.id, no ON DELETE CASCADE), so
+    # deleting the resume first would violate that FK. Clean those up first.
+    sessions = db.query(InterviewSession).filter(InterviewSession.resume_id == resume_id).all()
+    for sess in sessions:
+        if sess.audio_key:
+            try:
+                storage.delete_object(sess.audio_key)
+            except Exception:
+                logger.warning("Failed to delete interview audio %s for resume %s", sess.audio_key, resume_id)
+        db.delete(sess)
+
+    db.delete(r)
+    db.commit()
+    logger.info("Resume deleted: %s (user=%s, interview_sessions_removed=%d)", resume_id, user.id, len(sessions))
     # Clean up the stored file (best-effort; don't fail the request).
     if storage_key:
         storage.delete_object(storage_key)
@@ -502,13 +517,18 @@ async def mock_interview_live(websocket: WebSocket, resume_id: str, token: str =
         db.close()
 
     started_at = datetime.utcnow()
-    result = await live_interview.run_interview_session(websocket, content)
-    ended_at = datetime.utcnow()
+    with set_user(user_id):
+        result = await live_interview.run_interview_session(websocket, content, user_id=user_id)
+        ended_at = datetime.utcnow()
 
-    # Report generation is a blocking LLM call — run it off the event loop.
-    report = await asyncio.to_thread(
-        live_interview.generate_interview_report, content, result.get("transcript", [])
-    )
+        # Report generation is a blocking LLM call — run it off the event loop.
+        # asyncio.to_thread copies the current context (including the user_id
+        # contextvar set above) into the worker thread, so the usage log
+        # written inside generate_interview_report is still attributed to
+        # this user.
+        report = await asyncio.to_thread(
+            live_interview.generate_interview_report, content, result.get("transcript", [])
+        )
 
     session_id = None
     db = SessionLocal()

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, JSON, Boolean
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, JSON, Boolean
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -173,6 +173,53 @@ class InterviewSession(Base):
     audio_key = Column(String, nullable=True)        # StorageService key (filled after upload)
     audio_mime = Column(String, nullable=True)       # e.g. audio/webm
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LlmUsageLog(Base):
+    """One row per LLM API call — full token trace + computed cost.
+
+    Powers the admin "LLM Usage" dashboard: per-user usage/cost, breakdowns
+    by purpose (which feature triggered the call) and modality (text/image/
+    audio/video/document — since each is billed at a different rate), and
+    a raw call log for auditing. See app/ai/usage_tracker.py for how rows
+    here are written and priced, and app/config.py for the per-modality
+    price-per-1M-tokens environment variables.
+    """
+    __tablename__ = "llm_usage_logs"
+    id = Column(String(64), primary_key=True, default=_uuid)
+    user_id = Column(String(64), ForeignKey("users.id"), nullable=True, index=True)
+
+    # What the call was for, e.g. "resume_parsing", "cover_letter",
+    # "mock_interview_live". Free-form but drawn from a small fixed set —
+    # see app/ai/usage_tracker.py::Purpose for the canonical tags.
+    purpose = Column(String(64), nullable=False, index=True, default="general")
+
+    provider = Column(String(32), nullable=False)      # anthropic | gemini | grok
+    model = Column(String(128), nullable=True)
+
+    # Modality of the INPUT that drove the token count/rate for this call.
+    # text | image | audio | video | document | mixed
+    modality = Column(String(16), nullable=False, default="text", index=True)
+
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    cached_tokens = Column(Integer, default=0)     # billed at a discounted rate
+    thoughts_tokens = Column(Integer, default=0)   # thinking-model reasoning tokens
+    total_tokens = Column(Integer, default=0)
+
+    cost_usd = Column(Float, default=0.0)
+    currency = Column(String(8), default="USD")
+
+    # Free-form extra context (e.g. resume_id, duration_seconds for audio,
+    # whether the cost was measured from usage_metadata or estimated).
+    request_meta = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_llm_usage_user_created", "user_id", "created_at"),
+        Index("idx_llm_usage_purpose_created", "purpose", "created_at"),
+    )
 
 
 class ContactMessage(Base):

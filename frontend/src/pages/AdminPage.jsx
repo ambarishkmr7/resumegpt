@@ -53,6 +53,17 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState("overview");
 
+  // LLM usage tab state
+  const [llmSummary, setLlmSummary] = useState(null);
+  const [llmUsers, setLlmUsers] = useState([]);
+  const [llmLogs, setLlmLogs] = useState([]);
+  const [llmDays, setLlmDays] = useState(30);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmError, setLlmError] = useState("");
+  const [llmPurposeFilter, setLlmPurposeFilter] = useState("");
+  const [llmProviderFilter, setLlmProviderFilter] = useState("");
+  const [llmLoaded, setLlmLoaded] = useState(false);
+
   // Change password state
   const [cpCurrent, setCpCurrent] = useState("");
   const [cpNew, setCpNew] = useState("");
@@ -118,6 +129,29 @@ export default function AdminPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const loadLlmUsage = () => {
+    setLlmLoading(true);
+    setLlmError("");
+    Promise.all([
+      api.adminLlmUsageSummary(llmDays),
+      api.adminLlmUsageByUser(llmDays, 50),
+      api.adminLlmUsageLogs({ days: llmDays, purpose: llmPurposeFilter, provider: llmProviderFilter, limit: 100 }),
+    ])
+      .then(([summary, users, logs]) => {
+        setLlmSummary(summary);
+        setLlmUsers(users);
+        setLlmLogs(logs);
+        setLlmLoaded(true);
+      })
+      .catch((e) => setLlmError(e.message))
+      .finally(() => setLlmLoading(false));
+  };
+
+  useEffect(() => {
+    if (section === "llm-usage") loadLlmUsage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, llmDays, llmPurposeFilter, llmProviderFilter]);
+
   const startEdit = (page) => {
     setEditSlug(page.slug);
     setEditTitle(page.title);
@@ -171,6 +205,7 @@ export default function AdminPage() {
           <button className={`rtab ${section === "overview" ? "active" : ""}`} onClick={() => setSection("overview")}>📊 Overview</button>
           <button className={`rtab ${section === "users" ? "active" : ""}`} onClick={() => setSection("users")}>👥 Users</button>
           <button className={`rtab ${section === "payments" ? "active" : ""}`} onClick={() => setSection("payments")}>💳 Payments</button>
+          <button className={`rtab ${section === "llm-usage" ? "active" : ""}`} onClick={() => setSection("llm-usage")}>🤖 LLM Usage</button>
           <button className={`rtab ${section === "cms" ? "active" : ""}`} onClick={() => { setSection("cms"); setEditSlug(null); }}>📝 CMS Pages</button>
           <button className={`rtab ${section === "account" ? "active" : ""}`} onClick={() => setSection("account")}>⚙️ Account</button>
         </div>
@@ -329,6 +364,147 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+        )}
+
+        {/* ==================== LLM USAGE ==================== */}
+        {section === "llm-usage" && (
+          <div className="admin-llm-usage">
+            <div className="usage-filters">
+              <label htmlFor="llm-days" style={{ fontSize: 13, color: "var(--ink-soft)" }}>Time range:</label>
+              <select id="llm-days" value={llmDays} onChange={(e) => setLlmDays(Number(e.target.value))}>
+                <option value={1}>Last 24 hours</option>
+                <option value={7}>Last 7 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+                <option value={365}>Last year</option>
+              </select>
+              <label htmlFor="llm-purpose" style={{ fontSize: 13, color: "var(--ink-soft)" }}>Purpose:</label>
+              <select id="llm-purpose" value={llmPurposeFilter} onChange={(e) => setLlmPurposeFilter(e.target.value)}>
+                <option value="">All purposes</option>
+                {(llmSummary?.by_purpose || []).map((p) => (
+                  <option key={p.purpose} value={p.purpose}>{p.purpose}</option>
+                ))}
+              </select>
+              <label htmlFor="llm-provider" style={{ fontSize: 13, color: "var(--ink-soft)" }}>Provider:</label>
+              <select id="llm-provider" value={llmProviderFilter} onChange={(e) => setLlmProviderFilter(e.target.value)}>
+                <option value="">All providers</option>
+                {(llmSummary?.by_provider || []).map((p) => (
+                  <option key={p.provider} value={p.provider}>{p.provider}</option>
+                ))}
+              </select>
+              <button className="btn btn-ghost btn-sm" onClick={loadLlmUsage} disabled={llmLoading}>
+                {llmLoading ? "Refreshing…" : "↻ Refresh"}
+              </button>
+            </div>
+
+            {llmError && <div className="error" style={{ marginBottom: 16 }}>{llmError}</div>}
+
+            {!llmLoaded && llmLoading ? (
+              <p style={{ color: "var(--ink-soft)", textAlign: "center", padding: 20 }}>Loading usage data…</p>
+            ) : llmSummary && (
+              <>
+                <div className="stat-grid">
+                  <div className="stat-card accent">
+                    <div className="stat-num">${llmSummary.total_cost_usd?.toFixed(4)}</div>
+                    <div className="stat-label">Total Cost ({llmSummary.currency})</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-num">{llmSummary.total_calls?.toLocaleString()}</div>
+                    <div className="stat-label">Total Calls</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-num">{llmSummary.total_tokens?.toLocaleString()}</div>
+                    <div className="stat-label">Total Tokens</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-num">{llmSummary.total_output_tokens?.toLocaleString()}</div>
+                    <div className="stat-label">Output Tokens</div>
+                  </div>
+                </div>
+
+                <div className="usage-breakdown-grid" style={{ marginTop: 20 }}>
+                  <div className="usage-breakdown-card">
+                    <h4>Cost by Purpose</h4>
+                    {(llmSummary.by_purpose || []).length === 0 && <p style={{ color: "var(--ink-soft)", fontSize: 13 }}>No calls yet.</p>}
+                    {(() => {
+                      const max = Math.max(1, ...(llmSummary.by_purpose || []).map((p) => p.cost_usd));
+                      return (llmSummary.by_purpose || []).map((p) => (
+                        <div className="usage-bar-row" key={p.purpose}>
+                          <div className="usage-bar-label" title={p.purpose}>{p.purpose}</div>
+                          <div className="usage-bar-track"><div className="usage-bar-fill" style={{ width: `${(p.cost_usd / max) * 100}%` }} /></div>
+                          <div className="usage-bar-value">${p.cost_usd.toFixed(4)}</div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+
+                  <div className="usage-breakdown-card">
+                    <h4>Cost by Modality</h4>
+                    {(llmSummary.by_modality || []).length === 0 && <p style={{ color: "var(--ink-soft)", fontSize: 13 }}>No calls yet.</p>}
+                    {(llmSummary.by_modality || []).map((m) => (
+                      <div key={m.modality} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span className={`usage-badge modality-${m.modality}`}>{m.modality}</span>
+                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{m.calls} calls · {m.tokens.toLocaleString()} tok</span>
+                        <strong style={{ fontSize: 13 }}>${m.cost_usd.toFixed(4)}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="usage-breakdown-card">
+                    <h4>Cost by Provider</h4>
+                    {(llmSummary.by_provider || []).length === 0 && <p style={{ color: "var(--ink-soft)", fontSize: 13 }}>No calls yet.</p>}
+                    {(llmSummary.by_provider || []).map((p) => (
+                      <div key={p.provider} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span className={`usage-badge provider-${p.provider}`}>{p.provider}</span>
+                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{p.calls} calls · {p.tokens.toLocaleString()} tok</span>
+                        <strong style={{ fontSize: 13 }}>${p.cost_usd.toFixed(4)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <h3>Usage by User</h3>
+                <table className="admin-table">
+                  <thead><tr><th>User</th><th>Calls</th><th>Tokens</th><th>Cost</th><th>Last Used</th></tr></thead>
+                  <tbody>
+                    {llmUsers.map((u) => (
+                      <tr key={u.user_id || "unattributed"}>
+                        <td>{u.user_email || u.user_id?.slice(0, 12) + "…" || "(unattributed)"}</td>
+                        <td>{u.total_calls.toLocaleString()}</td>
+                        <td>{u.total_tokens.toLocaleString()}</td>
+                        <td>${u.total_cost_usd.toFixed(4)}</td>
+                        <td>{u.last_used_at ? new Date(u.last_used_at).toLocaleString() : "—"}</td>
+                      </tr>
+                    ))}
+                    {llmUsers.length === 0 && (
+                      <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--ink-soft)", padding: 20 }}>No usage recorded in this range.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+
+                <h3 style={{ marginTop: 28 }}>Recent Calls</h3>
+                <table className="admin-table">
+                  <thead><tr><th>Time</th><th>User</th><th>Purpose</th><th>Provider</th><th>Modality</th><th>Tokens (in/out)</th><th>Cost</th></tr></thead>
+                  <tbody>
+                    {llmLogs.map((l) => (
+                      <tr key={l.id}>
+                        <td>{l.created_at ? new Date(l.created_at).toLocaleString() : "—"}</td>
+                        <td>{l.user_email || (l.user_id ? l.user_id.slice(0, 10) + "…" : "—")}</td>
+                        <td>{l.purpose}</td>
+                        <td><span className={`usage-badge provider-${l.provider}`}>{l.provider}</span></td>
+                        <td><span className={`usage-badge modality-${l.modality}`}>{l.modality}</span></td>
+                        <td>{l.input_tokens.toLocaleString()} / {l.output_tokens.toLocaleString()}</td>
+                        <td>${l.cost_usd.toFixed(5)}</td>
+                      </tr>
+                    ))}
+                    {llmLogs.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--ink-soft)", padding: 20 }}>No calls logged in this range.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </>
             )}
           </div>
         )}

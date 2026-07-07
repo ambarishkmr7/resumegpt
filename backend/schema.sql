@@ -151,6 +151,34 @@ CREATE TABLE IF NOT EXISTS contact_messages (
     INDEX idx_contact_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 10. LLM Usage Logs table (token tracing + cost per call, for the admin
+--     "LLM Usage" dashboard). Also auto-created by SQLAlchemy on app startup
+--     (Base.metadata.create_all), this DDL is provided for manual setups.
+CREATE TABLE IF NOT EXISTS llm_usage_logs (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    user_id VARCHAR(64) DEFAULT NULL,
+    purpose VARCHAR(64) NOT NULL DEFAULT 'general',   -- which feature triggered the call, e.g. 'resume_parsing', 'cover_letter'
+    provider VARCHAR(32) NOT NULL,                      -- anthropic | gemini | grok
+    model VARCHAR(128) DEFAULT NULL,
+    modality VARCHAR(16) NOT NULL DEFAULT 'text',       -- text | image | audio | video | document | mixed
+    input_tokens INT DEFAULT 0,
+    output_tokens INT DEFAULT 0,
+    cached_tokens INT DEFAULT 0,
+    thoughts_tokens INT DEFAULT 0,
+    total_tokens INT DEFAULT 0,
+    cost_usd DOUBLE DEFAULT 0,
+    currency VARCHAR(8) DEFAULT 'USD',
+    request_meta JSON DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_llm_usage_user (user_id),
+    INDEX idx_llm_usage_purpose (purpose),
+    INDEX idx_llm_usage_modality (modality),
+    INDEX idx_llm_usage_created (created_at),
+    INDEX idx_llm_usage_user_created (user_id, created_at),
+    INDEX idx_llm_usage_purpose_created (purpose, created_at),
+    CONSTRAINT fk_llm_usage_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================
 -- Seed CMS Pages
 -- ============================================================

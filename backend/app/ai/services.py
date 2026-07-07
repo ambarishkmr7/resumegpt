@@ -5,6 +5,7 @@ import logging
 import re
 
 from app.ai import client
+from app.ai.usage_tracker import Purpose
 from app.schemas import ResumeContent
 from app.resumes.ats import score_resume
 logger = logging.getLogger(__name__)
@@ -87,13 +88,40 @@ def _gemini_client():
     return genai.Client(api_key=api_key)
 
 
-def _gemini_complete_json(prompt: str, system: str = "", max_tokens: int = 2000) -> dict:
+def _log_gemini_sdk_usage(response, model: str, purpose: str = None, modality: str = "text") -> None:
+    """Log token usage from a native google-genai SDK response (as opposed to
+    the raw REST calls in app/ai/gemini.py / app/ai/client.py). The SDK
+    exposes the same fields as the REST API, just as snake_case attributes:
+    response.usage_metadata.{prompt_token_count, candidates_token_count,
+    cached_content_token_count, thoughts_token_count}.
+    """
+    from app.ai import usage_tracker
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return
+    try:
+        usage_tracker.record_usage(
+            provider="gemini",
+            model=model,
+            modality=modality,
+            input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+            cached_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
+            thoughts_tokens=getattr(usage, "thoughts_token_count", 0) or 0,
+            purpose=purpose,
+        )
+    except Exception:
+        logger.exception("Usage logging failed for Gemini SDK call")
+
+
+def _gemini_complete_json(prompt: str, system: str = "", max_tokens: int = 2000, purpose: str = None) -> dict:
     """Send a prompt to Gemini 2.5 Flash and parse JSON response."""
     from google.genai import types
+    model = "gemini-flash-lite-latest"
     client = _gemini_client()
     system_instruction = system if system else None
     response = client.models.generate_content(
-        model="gemini-flash-lite-latest",
+        model=model,
         contents=[prompt],
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -101,6 +129,7 @@ def _gemini_complete_json(prompt: str, system: str = "", max_tokens: int = 2000)
             temperature=0.7,
         ),
     )
+    _log_gemini_sdk_usage(response, model=model, purpose=purpose)
     text = response.text.strip()
     # Strip markdown code fences if present
     if text.startswith("```"):
@@ -149,7 +178,7 @@ def generate_cover_letter(content: ResumeContent, job_title=None, company=None,
         "Use concrete achievements from the resume. Do not invent facts. "
         "Return only the letter text, no preamble."
     )
-    return client.complete(prompt, system=system, max_tokens=900)
+    return client.complete(prompt, system=system, max_tokens=900, purpose=Purpose.COVER_LETTER)
 
 
 # ---------------- Content suggestions / rewrite ----------------
@@ -178,7 +207,7 @@ def suggest_improvements(content: ResumeContent, job_description=None):
         "original. Return only the JSON object."
     )
     try:
-        data = client.complete_json(prompt, system=system, max_tokens=3000)
+        data = client.complete_json(prompt, system=system, max_tokens=3000, purpose=Purpose.RESUME_SUGGESTIONS)
         improved = ResumeContent.model_validate(data)
         notes = ["AI rewrote bullets for impact and ATS keyword alignment."]
         return improved, notes
@@ -218,7 +247,7 @@ def analyze_career(content: ResumeContent, job_description=None) -> dict:
         "Return ONLY the JSON object, no markdown or extra text."
     )
     try:
-        data = _gemini_complete_json(prompt, system=system, max_tokens=2500)
+        data = _gemini_complete_json(prompt, system=system, max_tokens=2500, purpose=Purpose.CAREER_ANALYSIS)
         # Normalize weaknesses to always be objects with text + urgency
         raw_weaknesses = data.get("weaknesses", [])
         weaknesses = []
@@ -433,7 +462,7 @@ def career_roadmap(content: ResumeContent, target_role=None) -> dict:
         "Return ONLY the JSON object, no markdown or extra text."
     )
     try:
-        data = _gemini_complete_json(prompt, system=system, max_tokens=3000)
+        data = _gemini_complete_json(prompt, system=system, max_tokens=3000, purpose=Purpose.CAREER_ROADMAP)
         # Normalize roadmap_steps to always be objects
         raw_steps = data.get("roadmap_steps", [])
         roadmap_steps = []
@@ -520,7 +549,7 @@ def suggest_jobs(content: ResumeContent, target_role=None, location=None) -> dic
         'Return JSON: {"suggestions":[...],"linkedin_job_url":"...","naukri_job_url":"...","indeed_job_url":"...","remote_jobs_url":"..."}'
     )
     try:
-        return client.complete_json(prompt, system=system, max_tokens=2500)
+        return client.complete_json(prompt, system=system, max_tokens=2500, purpose=Purpose.JOB_SUGGESTIONS)
     except Exception:
         return suggest_jobs(content, target_role, location)
 
@@ -707,7 +736,7 @@ def suggest_job_listings(content, target_role=None, location=None, skills=None) 
         '"experience_required":"","skills_required":[],"description":"","salary_range":"","source":"LinkedIn","posted_days_ago":1,"apply_url":""}]}'
     )
     try:
-        result = client.complete_json(prompt, system=system, max_tokens=4000)
+        result = client.complete_json(prompt, system=system, max_tokens=4000, purpose=Purpose.JOB_LISTINGS)
         ai_listings = result.get("listings", [])
         for item in ai_listings:
             item["apply_url"] = _skill_search_url("LinkedIn", title, loc, skill_list)
@@ -764,7 +793,7 @@ def generate_writeup(content: ResumeContent, purpose="linkedin") -> str:
         f"RESUME:\n{content.model_dump_json(indent=2)}\n\n"
         "Use their real achievements and skills. No filler or clichés. Return only the text."
     )
-    return client.complete(prompt, system=system, max_tokens=600)
+    return client.complete(prompt, system=system, max_tokens=600, purpose=Purpose.LINKEDIN_WRITEUP)
 
 
 # ---------------- AI rewrite (multiple variants) ----------------
@@ -798,7 +827,7 @@ def rewrite_resume(content: ResumeContent, job_description=None, num_variants=3)
         f"}},...]\nReturn ONLY the JSON array."
     )
     try:
-        data = client.complete_json(prompt, system=system, max_tokens=6000)
+        data = client.complete_json(prompt, system=system, max_tokens=6000, purpose=Purpose.RESUME_REWRITE)
         if isinstance(data, list):
             return data[:num_variants]
         return [dict(label="AI Rewrite", description="AI-improved version.", content=data)]
@@ -950,6 +979,7 @@ def generate_sample_resume(job_title: str, years_experience: int, name: str) -> 
                 f"Return only a JSON array of strings, no explanation.",
                 system="You are a career expert. Return only a JSON array.",
                 max_tokens=300,
+                purpose=Purpose.RESUME_SAMPLE_GENERATION,
             )
             raw = raw.strip().lstrip("```json").rstrip("```").strip()
             import ast
@@ -1054,7 +1084,7 @@ def generate_sample_resume(job_title: str, years_experience: int, name: str) -> 
                 "Fill in realistic (but fictional) company names, achievements with metrics, "
                 "and relevant skills. Return ONLY the JSON object."
             )
-            ai_content = client.complete_json(prompt, system=system, max_tokens=3000)
+            ai_content = client.complete_json(prompt, system=system, max_tokens=3000, purpose=Purpose.RESUME_SAMPLE_GENERATION)
             if isinstance(ai_content, dict) and "contact" in ai_content:
                 # Normalize certifications: ensure each item is a string
                 certs = ai_content.get("certifications", [])
@@ -1195,7 +1225,7 @@ def career_counseling(content: ResumeContent, question: str, history: list = Non
     # === Try Gemini first (FREE) ===
     if gemini_client.available():
         try:
-            text = gemini_client.chat(conv, system=system_prompt, max_tokens=1000)
+            text = gemini_client.chat(conv, system=system_prompt, max_tokens=1000, purpose=Purpose.CAREER_COUNSELING)
             import re as _re
             text = _re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
             try:
@@ -1215,7 +1245,7 @@ def career_counseling(content: ResumeContent, question: str, history: list = Non
     if client.available():
         try:
             prompt = f"Resume: {resume_summary}\n\nQuestion: {question}"
-            return client.complete_json(prompt, system=system_prompt, max_tokens=800)
+            return client.complete_json(prompt, system=system_prompt, max_tokens=800, purpose=Purpose.CAREER_COUNSELING)
         except Exception:
             pass
 
@@ -1577,6 +1607,7 @@ def mock_interview(content: ResumeContent, role: str = None, difficulty: str = "
                 prompt,
                 system="You are an expert interview question designer across ALL professional domains. Generate questions specific to the candidate's actual field.",
                 max_tokens=3000,
+                purpose=Purpose.MOCK_INTERVIEW_QUESTIONS,
             )
             if isinstance(extra, list):
                 for i, q in enumerate(extra):
@@ -1665,7 +1696,7 @@ def rate_interview_answer(content: ResumeContent, question: str, answer: str, ro
                 f"Question: {question}\nAnswer: {answer}\n\n"
                 f"Return JSON: {{\"score\":0-100,\"rating\":\"\",\"strengths\":[],\"gaps\":[],\"suggested_answer\":\"\",\"references\":[]}}"
             )
-            result = gemini_client.complete_json(prompt, system="Expert interview coach. Be specific and actionable.", max_tokens=1000)
+            result = gemini_client.complete_json(prompt, system="Expert interview coach. Be specific and actionable.", max_tokens=1000, purpose=Purpose.MOCK_INTERVIEW_ANSWER_RATING)
             if isinstance(result, dict) and "score" in result:
                 return result
         except Exception:
@@ -1804,7 +1835,7 @@ def ai_job_agent(content: ResumeContent, target_role: str = None, location: str 
                 f"{name} applying for {title}. Skills: {', '.join(skills)}. "
                 f"Return only the letter."
             )
-            ai_letter = gemini_client.complete(prompt, system="Professional cover letter writer.", max_tokens=500)
+            ai_letter = gemini_client.complete(prompt, system="Professional cover letter writer.", max_tokens=500, purpose=Purpose.JOB_AGENT)
             if len(ai_letter) > 50:
                 cover_letter = ai_letter
     except Exception:
@@ -1878,7 +1909,7 @@ def trending_jobs(content: ResumeContent) -> dict:
         'Return ONLY JSON: {"jobs": [...], "market_insight": "..."}'
     )
     try:
-        data = client.complete_json(prompt, system=system, max_tokens=2500)
+        data = client.complete_json(prompt, system=system, max_tokens=2500, purpose=Purpose.TRENDING_JOBS)
         # Normalize jobs to ensure consistent schema regardless of LLM output quirks
         normalized_jobs = []
         for job in data.get("jobs", []):
@@ -1967,6 +1998,7 @@ def _generate_skill_based_qa(title: str, skills: list, target: int = 100) -> tup
             ),
             system="Expert interview coach. Output strict JSON only.",
             max_tokens=2500,
+            purpose=Purpose.INTERVIEW_LEARNING_MATERIALS,
         )
         _absorb(beh.get("qa", []), "Behavioral")
     except Exception as exc:
@@ -1992,6 +2024,7 @@ def _generate_skill_based_qa(title: str, skills: list, target: int = 100) -> tup
                 ),
                 system="Senior technical interviewer. Output strict JSON only.",
                 max_tokens=4000,
+                purpose=Purpose.INTERVIEW_LEARNING_MATERIALS,
             )
             before = len(qa)
             _absorb(data.get("qa", []), batch[0])

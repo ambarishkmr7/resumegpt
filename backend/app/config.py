@@ -64,6 +64,41 @@ class Settings(BaseSettings):
     GROK_API_KEY: str = ""
     GROK_MODEL: str = "grok-3-mini"  # or grok-3 for full model
 
+    # ── LLM usage & cost tracking ────────────────────────────────────────────
+    # Every LLM call is logged (tokens + computed cost) to the llm_usage_logs
+    # table for the admin "LLM Usage" dashboard. Set LLM_USAGE_TRACKING_ENABLED
+    # to false to disable logging entirely (e.g. in tests).
+    #
+    # Pricing is USD per 1,000,000 tokens, split by provider + modality +
+    # input/output, so changing a rate later (providers change pricing fairly
+    # often) is a single env var edit — no code changes required. Modality
+    # matters because providers bill text/image/audio/video/document input at
+    # different rates. Defaults below are reasonable placeholders; confirm
+    # current pricing on each provider's pricing page before relying on them
+    # for real billing/finance.
+    LLM_USAGE_TRACKING_ENABLED: bool = True
+    LLM_PRICING_CURRENCY: str = "USD"
+
+    # Gemini (per official Gemini API pricing tiers, e.g. Flash-class models)
+    GEMINI_PRICE_TEXT_INPUT_PER_1M: float = 0.075
+    GEMINI_PRICE_TEXT_OUTPUT_PER_1M: float = 0.30
+    GEMINI_PRICE_IMAGE_INPUT_PER_1M: float = 0.075
+    GEMINI_PRICE_AUDIO_INPUT_PER_1M: float = 1.00
+    GEMINI_PRICE_AUDIO_OUTPUT_PER_1M: float = 0.30
+    GEMINI_PRICE_VIDEO_INPUT_PER_1M: float = 0.075
+    GEMINI_PRICE_DOCUMENT_INPUT_PER_1M: float = 0.075
+    GEMINI_PRICE_CACHED_INPUT_PER_1M: float = 0.01875
+    GEMINI_PRICE_THOUGHTS_PER_1M: float = 0.30  # thinking tokens billed as output
+
+    # Anthropic Claude (Sonnet-class default; adjust if AI_MODEL points elsewhere)
+    ANTHROPIC_PRICE_TEXT_INPUT_PER_1M: float = 3.00
+    ANTHROPIC_PRICE_TEXT_OUTPUT_PER_1M: float = 15.00
+    ANTHROPIC_PRICE_IMAGE_INPUT_PER_1M: float = 3.00  # images billed as input tokens
+
+    # xAI Grok
+    GROK_PRICE_TEXT_INPUT_PER_1M: float = 0.20
+    GROK_PRICE_TEXT_OUTPUT_PER_1M: float = 0.50
+
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""

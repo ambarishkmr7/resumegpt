@@ -14,6 +14,8 @@ import time
 from google import genai
 from google.genai import types
 
+from app.ai import usage_tracker
+from app.ai.usage_tracker import Purpose
 from app.config import get_settings
 from app.schemas import ResumeContent
 
@@ -199,6 +201,31 @@ def _build_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
+def _log_usage(response, modality: str) -> None:
+    """Log token usage for a resume-parsing call. PDFs are billed as
+    "document" input (Gemini tokenizes each page similarly to an image);
+    DOCX text goes through as plain "text" input. See
+    https://ai.google.dev/gemini-api/docs/tokens for the modality breakdown
+    Gemini returns in usage_metadata.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return
+    try:
+        usage_tracker.record_usage(
+            provider="gemini",
+            model=_MODEL,
+            modality=modality,
+            input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+            cached_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
+            thoughts_tokens=getattr(usage, "thoughts_token_count", 0) or 0,
+            purpose=Purpose.RESUME_PARSING,
+        )
+    except Exception:
+        logger.exception("Usage logging failed for resume parsing call")
+
+
 def _build_prompt() -> str:
     example_str = json.dumps(_EXAMPLE, indent=2)
     return (
@@ -247,6 +274,7 @@ def _parse_pdf(client: genai.Client, file_bytes: bytes) -> ResumeContent:
                 response_schema=_RESPONSE_SCHEMA,
             ),
         )
+        _log_usage(response, modality="document")
         if response.parsed is None:
             raise RuntimeError("Gemini returned no parsed content for the PDF.")
         return ResumeContent.model_validate(response.parsed)
@@ -273,6 +301,7 @@ def _parse_text(client: genai.Client, raw_text: str) -> ResumeContent:
             response_schema=_RESPONSE_SCHEMA,
         ),
     )
+    _log_usage(response, modality="text")
     if response.parsed is None:
         raise RuntimeError("Gemini returned no parsed content for the text.")
     return ResumeContent.model_validate(response.parsed)

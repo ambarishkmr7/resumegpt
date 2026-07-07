@@ -29,4 +29,11 @@ def get_current_user(
     if not user:
         logger.warning("Token valid but user not found (user_id=%s)", user_id)
         raise credentials_exc
+    # NOTE: LLM-usage attribution (which user triggered a given AI call) is
+    # NOT set here — it's set in app.main.LlmUsageContextMiddleware instead.
+    # FastAPI resolves sync dependencies (like this one) and sync endpoint
+    # functions via separate run_in_threadpool() calls, each taking its own
+    # contextvars snapshot, so a contextvar set inside this function would
+    # never be visible to the endpoint or to app/ai/services.py. See
+    # app/core/llm_context.py for details.
     return user

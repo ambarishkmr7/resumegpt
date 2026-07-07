@@ -144,6 +144,36 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# ── LLM usage attribution middleware ────────────────────────────────────────────
+# Tags every request with the caller's user id (from the JWT) for LLM usage
+# logging (see app/core/llm_context.py, app/ai/usage_tracker.py).
+#
+# This has to happen in real ASGI middleware — NOT in the get_current_user
+# dependency — because FastAPI resolves each sync dependency and each sync
+# endpoint via a *separate* run_in_threadpool() call, each of which takes its
+# own contextvars.copy_context() snapshot of the request's context at the
+# moment it's dispatched. A contextvar set *inside* one of those threadpool
+# calls never propagates back out to the caller, so a set_user_id() call
+# inside get_current_user was silently discarded — hence usage rows showing
+# up as "(unattributed)". Setting it here, before call_next() forks off to
+# routing/dependencies/the endpoint, means every later copy_context() picks
+# up the value.
+class LlmUsageContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        from app.core.llm_context import set_user_id
+        from app.core.security import decode_token
+
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            try:
+                user_id = decode_token(auth[7:].strip())
+                if user_id:
+                    set_user_id(user_id)
+            except Exception:
+                pass
+        return await call_next(request)
+
+
 app = FastAPI(title="resumes-gpt API", version="1.0.0", lifespan=lifespan)
 
 # Rate limiting (slowapi) — limiter is shared with the auth router via app.core.rate_limit
@@ -159,6 +189,7 @@ app.add_middleware(
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(LlmUsageContextMiddleware)
 app.include_router(auth_router)
 app.include_router(resumes_router)
 app.include_router(templates_router)
