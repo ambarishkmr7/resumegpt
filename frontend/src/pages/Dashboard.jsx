@@ -78,6 +78,7 @@ export default function Dashboard() {
   const [newYears, setNewYears] = useState(3);
   const [newName, setNewName] = useState("");
   const [siteStats, setSiteStats] = useState({ total_resumes: null, ats_pass_rate: null });
+  const [plans, setPlans] = useState([]);
   const [profilePct, setProfilePct] = useState(0);
   const fileRef = useRef();
 
@@ -85,6 +86,7 @@ export default function Dashboard() {
     api.listResumes().then(setResumes).catch((e) => setError(e.message)).finally(() => setLoading(false));
     api.subscriptionStatus().then(setSubStatus).catch(() => {});
     api.getProfile().then((p) => setProfilePct(p.profile_completion ?? 0)).catch(() => {});
+    api.plans().then((d) => setPlans(d.plans || [])).catch(() => {});
   };
 
   useEffect(() => {
@@ -148,7 +150,8 @@ export default function Dashboard() {
 
   if (loading) return <DashboardSkeleton />;
 
-  const isSubscribed = !!(subStatus?.is_subscribed && subStatus?.payment_id);
+  const isSubscribed = !!subStatus?.is_subscribed;
+  const fromPrice = plans.length ? Math.min(...plans.map((p) => p.price_inr)) : 500;
   const statResumes = siteStats.total_resumes !== null ? siteStats.total_resumes.toLocaleString("en-IN") : "…";
   const statAts = siteStats.ats_pass_rate !== null ? `${siteStats.ats_pass_rate}%` : "…";
 
@@ -296,7 +299,7 @@ export default function Dashboard() {
                 { stat: statResumes, label: "Resumes Created" },
                 { stat: statAts, label: "ATS Pass Rate" },
                 { stat: "30+", label: "Professional Templates" },
-                { stat: "₹1,999", label: "One-time Lifetime Plan" },
+                { stat: `₹${fromPrice}`, label: "Plans from / month" },
               ].map((s) => (
                 <div key={s.label} style={{ textAlign: "center", padding: 16, background: "#fff", borderRadius: 12, border: "1px solid #e2dccf" }}>
                   <div className="stat-number" style={{ fontSize: 28, fontWeight: 800, color: "#b45309" }}>{s.stat}</div>
@@ -332,9 +335,9 @@ export default function Dashboard() {
           {/* Plans */}
           <section className="section">
             <h2 className="section-title">Choose Your Plan</h2>
-            <p className="section-sub">One-time payment. Lifetime access. No recurring charges.</p>
-            <div className="plans-row two-col">
-              <div className="plan-box">
+            <p className="section-sub">Monthly plans with mock-interview minutes. Cancel anytime · top up with refills when you need more.</p>
+            <div className="plans-row" style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
+              <div className="plan-box" style={{ flex: "1 1 220px", maxWidth: 300 }}>
                 <div className="plan-box-name">Free</div>
                 <div className="plan-box-price"><span>₹</span>0</div>
                 <div className="plan-box-period">forever</div>
@@ -342,40 +345,30 @@ export default function Dashboard() {
                   <li>✓ Create &amp; edit unlimited resumes</li>
                   <li>✓ 30 professional templates</li>
                   <li>✓ ATS scoring &amp; suggestions</li>
-                  <li>✓ AI career analysis</li>
-                  <li>✓ Career roadmap</li>
-                  <li>✓ PDF / DOCX download</li>
-                  <li>✓ AI resume rewriting</li>
-                  <li>✓ Cover letter generator</li>
-                  <li>✓ AI tools (Career Analysis, Career Roadmap, Job Search, Trending jobs)</li>
+                  <li>✓ AI career analysis &amp; roadmap</li>
+                  <li>✓ AI resume rewriting &amp; cover letters</li>
+                  <li>✓ Free trial interview minutes</li>
                 </ul>
-                {isSubscribed ? (
-                  <button className="btn btn-ghost" style={{ width: "100%" }} disabled>Free Plan</button>
-                ) : (
-                  <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
-                )}
+                <button className="btn btn-ghost" style={{ width: "100%" }} disabled>{isSubscribed ? "Free Plan" : "✓ Current Plan"}</button>
               </div>
-              <div className={`plan-box elite ${isSubscribed ? "current" : ""}`}>
-                <div className="plan-box-popular">✨ LIFETIME ACCESS</div>
-                <div className="plan-box-name">Elite</div>
-                <div className="plan-box-price"><span>₹</span>1,999</div>
-                <div className="plan-box-period">one-time · lifetime</div>
-                <ul className="plan-box-features">
-                  <li>✓ Everything in Free</li>
-                  <li>✓ Job search &amp; Posting agent</li>
-                  <li>✓ 🤖 AI Career Counseling Bot</li>
-                  <li>✓ 🎤 Mock Interview Practice</li>
-                  <li>✓ 📊 Interview Gap Analysis</li>
-                  <li>✓ 🚀 AI Job Application Agent</li>
-                  <li>✓ Priority support &amp; early access</li>
-                </ul>
-                {isSubscribed ? (
-                  <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
-                ) : (
-                  <button className="btn btn-primary" style={{ width: "100%", background: "linear-gradient(135deg, #d97706, #b45309)" }}
-                    onClick={() => navigate("/page/subscription")}>Subscribe — ₹1,999</button>
-                )}
-              </div>
+              {plans.map((p) => (
+                <div key={p.id} className={`plan-box ${p.is_default ? "" : "elite"} ${isSubscribed && subStatus?.plan === p.slug ? "current" : ""}`}
+                  style={{ flex: "1 1 220px", maxWidth: 300 }}>
+                  {p.badge && <div className="plan-box-popular">{p.badge}</div>}
+                  <div className="plan-box-name">{p.name}</div>
+                  <div className="plan-box-price"><span>₹</span>{p.price_inr.toLocaleString("en-IN")}</div>
+                  <div className="plan-box-period">per month · {p.interview_minutes} min</div>
+                  <ul className="plan-box-features">
+                    {(p.features || []).map((f, i) => <li key={i}>✓ {f}</li>)}
+                  </ul>
+                  {isSubscribed && subStatus?.plan === p.slug ? (
+                    <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
+                  ) : (
+                    <button className="btn btn-primary" style={{ width: "100%", background: "linear-gradient(135deg, #d97706, #b45309)" }}
+                      onClick={() => setShowSub(true)}>Subscribe — ₹{p.price_inr.toLocaleString("en-IN")}/mo</button>
+                  )}
+                </div>
+              ))}
             </div>
           </section>
 
@@ -406,7 +399,7 @@ export default function Dashboard() {
             <h2 className="section-title">Frequently Asked Questions</h2>
             <div style={{ maxWidth: 720, margin: "0 auto" }}>
               {[
-                { q: "Is resumesGPT free to use?", a: "Yes! Creating resumes, using the AI analysis, career roadmap, and ATS scorer are completely free. A one-time Elite payment (₹1,999) unlocks career counselling, mock interviews, Interview GAP analysis, Job Posting via Agent and Priority support & early access." },
+                { q: "Is resumesGPT free to use?", a: "Yes! Creating resumes, using the AI analysis, career roadmap, and ATS scorer are completely free. A monthly plan (from ₹500/mo) adds mock-interview minutes, career counselling, Interview GAP analysis, Job Posting via Agent and priority support. Run out of minutes mid-month? Top up instantly with a refill pack." },
                 { q: "How does the ATS score work?", a: "Our ATS engine uses a 100-point rubric scoring your resume on contact completeness, summary quality, experience bullet strength, skills coverage, education, and keyword match. Every deduction comes with a specific fix." },
                 { q: "Can I import my existing resume?", a: "Yes — upload any PDF or DOCX resume and we'll parse it into an editable format. You can then enhance it, switch templates, and download a polished version." },
                 { q: "Does it work for freshers with no experience?", a: "Absolutely. Our AI generates a strong entry-level resume based on your name, target role, and years of experience (0 works!). It includes a strong objective, education section, and relevant skills." },

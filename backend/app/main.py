@@ -19,7 +19,9 @@ from app.database import Base, engine, SessionLocal
 from app.resumes.router import router as resumes_router
 from app.templates.router import router as templates_router
 from app.subscription.router import router as sub_router
+from app.subscription.webhook import router as sub_webhook_router
 from app.admin.router import router as admin_router
+from app.admin.billing import router as admin_billing_router
 from app.public_routes.router import router as public_router
 from app.agent.router import router as agent_router
 from app.profile.router import router as profile_router
@@ -125,6 +127,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Author seed skipped: %s", e)
 
+    try:
+        from app.subscription.seed import seed_billing
+        db = SessionLocal()
+        try:
+            seed_billing(db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Billing seed skipped: %s", e)
+
     logger.info("Startup complete — all routers mounted")
     yield
     # Shutdown
@@ -194,7 +206,9 @@ app.include_router(auth_router)
 app.include_router(resumes_router)
 app.include_router(templates_router)
 app.include_router(sub_router)
+app.include_router(sub_webhook_router)
 app.include_router(admin_router)
+app.include_router(admin_billing_router)
 app.include_router(public_router)
 app.include_router(agent_router)
 app.include_router(profile_router)

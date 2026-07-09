@@ -98,7 +98,7 @@ CMS_DEFAULTS = [
     ("faq", "❓ FAQ", "**Q: How does the ATS scoring work?**\nA: Our ATS scorer uses a 100-point weighted rubric analyzing contact completeness, summary quality, experience bullet points, skills coverage, and keyword matching against job descriptions.\n\n**Q: Do I need to pay to edit my resume?**\nA: No! Resume editing, AI analysis, career roadmaps, and all tools are free. Payment (₹1,999 Elite plan) is only required to download as PDF/DOCX.\n\n**Q: What's included in the Elite plan?**\nA: Everything in Pro plus upcoming features: AI Career Counseling Bot, Mock Interviews, Interview Gap Analysis, and AI Agent Job Application.\n\n**Q: Is my data secure?**\nA: Yes. Your resume data is stored securely and never shared with third parties.\n\n**Q: Can I cancel my subscription?**\nA: The Elite plan is a one-time payment with lifetime access — no recurring charges to cancel.", "❓"),
     ("feedback", "💬 Feedback", "We\'d love to hear from you! Your feedback helps us improve resumes-gpt.\n\nPlease share your experience, suggestions, or report any issues using the form below.\n\nWe read every submission and use your feedback to improve the platform.", "💬"),
     ("blog", "📝 Blog", "Career Advice, Resume Tips & Job Search Guides for India 2026\n\nExpert-written guides to help you write a winning resume, ace interviews, and land your dream job.", "📝"),
-    ("subscription", "👑 Subscription", "**Elite Plan — ₹1,999 (One-time)**\n• Unlimited PDF and DOCX downloads\n• All 30 professional templates\n• AI-powered career analysis & roadmap\n• AI resume rewriting (3 variants)\n• Professional writeup & cover letter generator\n• Job search agent (LinkedIn, Naukri, Indeed)\n• 🤖 AI Career Counseling Bot\n• 🎤 Mock Interview Practice\n• 📊 Interview Gap Analysis\n• 🚀 AI Job Application Agent\n• Priority support\n• Early access to new features\n• Lifetime access — no recurring fees", "👑"),
+    ("subscription", "👑 Subscription", "**Monthly Plans — from ₹500/month**\n\nPick a plan that matches how much you interview. Every plan includes a pool of AI mock-interview minutes that refreshes each month. Run out mid-month? Top up instantly with a refill pack.\n\n**Starter — ₹500/mo**\n• 60 mock-interview minutes / month\n• AI scoring & gap analysis\n• All 30 templates & PDF/DOCX downloads\n• Career roadmap & job search agent\n\n**Pro — ₹999/mo** (Popular)\n• 150 mock-interview minutes / month\n• Everything in Starter\n• Priority AI responses\n• Interview learning materials\n\n**Elite — ₹1,999/mo** (Best value)\n• 400 mock-interview minutes / month\n• Everything in Pro\n• Highest-priority support\n• Early access to new features\n\n**Refill packs** — one-time top-ups when you need more: +30 min ₹99 · +60 min ₹179 · +120 min ₹299.\n\nCancel anytime. Secure payments via Razorpay.", "👑"),
     ("whats-new", "🚀 What's New", "**Coming Soon in resumes-gpt Elite:**\n\n🤖 **Career Counseling by AI Bot**\nGet personalized career advice through an interactive AI counselor that understands your background, skills, and goals.\n\n🎤 **Mock Interview Practice**\nPractice interviews with our AI interviewer tailored to your target role. Get real-time feedback on your answers.\n\n📊 **Interview Rating & Gap Analysis**\nAfter each mock interview, receive detailed scoring, gap analysis, and suggested correct answers with references to help you improve.\n\n🚀 **AI Agent Job Application**\nOur AI agent will search for relevant jobs on your behalf, craft professional cover letters, and apply with tailored responses to recruiter questions — all automatically.\n\nSubscribe to the Elite plan (₹1,999 one-time) to get access as soon as these features launch!", "🚀"),
     ("privacy-policy", "🔒 Privacy Policy", "**Privacy Policy — resumes-gpt**\n\nWe respect your privacy. This policy explains how we collect, use, and protect your information.\n\n**Data We Collect:** Name, email, resume content, and usage analytics.\n\n**How We Use It:** To provide resume building services, improve our platform, and communicate important updates.\n\n**Data Sharing:** We never sell or share your personal data with third parties for marketing purposes.\n\n**Data Security:** All data is encrypted in transit and at rest. We follow industry-standard security practices.\n\n**Your Rights:** You can request deletion of your account and all associated data at any time by contacting support@resumes-gpt.com.\n\n**Cookies:** We use minimal cookies for authentication and analytics.\n\nLast updated: May 2026", "🔒"),
     ("terms-of-service", "📄 Terms of Service", "**Terms of Service — resumes-gpt**\n\nBy using resumes-gpt, you agree to the following terms:\n\n1. **Account:** You are responsible for maintaining the security of your account credentials.\n\n2. **Content:** You retain ownership of all resume content you create. We do not claim any rights to your data.\n\n3. **Subscriptions:** Elite (₹1,999) are one-time lifetime payments. No recurring charges.\n\n4. **Acceptable Use:** Do not use the platform for illegal purposes, spam, or to create fraudulent documents.\n\n5. **AI-Generated Content:** AI suggestions are provided as guidance. You are responsible for reviewing and verifying all content before use.\n\n6. **Limitation of Liability:** resumes-gpt is provided \"as is\" without warranties. We are not liable for employment outcomes.\n\n7. **Changes:** We may update these terms with notice. Continued use constitutes acceptance.\n\nLast updated: May 2026", "📄"),
@@ -114,18 +114,18 @@ import re as _re
 # parses the price and bullet features from it.
 CMS_SUB_ID = "cms_sub"
 CMS_SUB_CONTENT = (
-    "**Elite Plan — ₹1,999 (One-time)**\n"
+    "**Starter Plan — ₹500 / month**\n"
+    "• 60 AI mock-interview minutes every month\n"
     "• Everything in Free\n"
-    "• Unlimited PDF and DOCX downloads\n"
-    "• All 30 professional templates\n"
-    "• Job search & Posting agent (LinkedIn, Naukri, Indeed)\n"
+    "• AI scoring & gap analysis\n"
+    "• All 30 templates + PDF/DOCX downloads\n"
+    "• Job search & posting agent (LinkedIn, Naukri, Indeed)\n"
     "• 🤖 AI Career Counseling Bot\n"
-    "• 🎤 Mock Interview Practice\n"
-    "• 📚 Learning Materials — skill-based Q&A\n"
+    "• 🎤 Live Mock Interview Practice\n"
     "• 📊 Interview Gap Analysis\n"
     "• 🚀 AI Job Application Agent\n"
-    "• Priority support & early access\n"
-    "• Lifetime access — no recurring fees"
+    "• Pro (₹999) & Elite (₹1,999) add more minutes\n"
+    "• Refill packs top up minutes anytime · cancel whenever"
 )
 
 
@@ -140,15 +140,23 @@ def _seed_cms(db: Session):
             if existing.content and _re.search(r'<[a-zA-Z][^>]*/?>', existing.content):
                 existing.content = content
                 existing.title = title
+            # One-time migration: refresh the subscription page off the old
+            # "₹1,999 one-time lifetime" copy onto the new monthly-plan copy.
+            elif slug == "subscription" and existing.content and (
+                "One-time" in existing.content or "one-time" in existing.content
+            ):
+                existing.content = content
+                existing.title = title
 
     # Homepage subscription record, addressed by id 'cms_sub'.
     sub = db.query(CmsPage).filter(
         or_(CmsPage.id == CMS_SUB_ID, CmsPage.slug == CMS_SUB_ID)
     ).first()
     if not sub:
-        db.add(CmsPage(id=CMS_SUB_ID, slug=CMS_SUB_ID, title="👑 Elite Plan",
+        db.add(CmsPage(id=CMS_SUB_ID, slug=CMS_SUB_ID, title="👑 Starter Plan",
                        content=CMS_SUB_CONTENT, icon="👑"))
-    elif sub.content and _re.search(r'<[a-zA-Z][^>]*/?>', sub.content):
+    elif sub.content and (_re.search(r'<[a-zA-Z][^>]*/?>', sub.content)
+                          or "One-time" in sub.content or "one-time" in sub.content):
         sub.content = CMS_SUB_CONTENT
 
     db.commit()
@@ -238,18 +246,30 @@ class PaymentOut(BaseModel):
     created_at: Optional[str] = None
 
 
-@router.get("/payments", response_model=List[PaymentOut])
-def list_payments(user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    """Return payment history with user email."""
-    payments = db.query(Payment).order_by(Payment.created_at.desc()).limit(50).all()
-    # Batch-fetch user emails
+@router.get("/payments")
+def list_payments(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+                  status: Optional[str] = Query(None), type: Optional[str] = Query(None),
+                  user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Paginated payment history with user email."""
+    q = db.query(Payment).order_by(Payment.created_at.desc())
+    if status:
+        q = q.filter(Payment.status == status)
+    if type:
+        q = q.filter(Payment.type == type)
+    total = q.count()
+    payments = q.offset((page - 1) * page_size).limit(page_size).all()
     user_ids = [p.user_id for p in payments]
     users = {u.id: u.email for u in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()} if user_ids else {}
-    return [PaymentOut(
-        id=p.id, user_id=p.user_id, user_email=users.get(p.user_id, ""),
-        plan=p.plan, amount=p.amount, currency=p.currency,
-        status=p.status, created_at=p.created_at.isoformat() if p.created_at else None,
-    ) for p in payments]
+    items = [{
+        "id": p.id, "user_id": p.user_id, "user_email": users.get(p.user_id, ""),
+        "plan": p.plan, "type": p.type, "amount": p.amount,
+        "base_amount_inr": p.base_amount_inr, "discount_inr": p.discount_inr,
+        "coupon_code": p.coupon_code, "currency": p.currency, "status": p.status,
+        "razorpay_payment_id": p.razorpay_payment_id,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    } for p in payments]
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "pages": max(1, (total + page_size - 1) // page_size)}
 
 
 # ---------- LLM Usage & Cost Tracking ----------
@@ -372,15 +392,16 @@ def llm_usage_summary(
     )
 
 
-@router.get("/llm-usage/by-user", response_model=List[LlmUserUsage])
+@router.get("/llm-usage/by-user")
 def llm_usage_by_user(
     days: int = Query(30, ge=1, le=365),
-    limit: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
     user: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
-    """Per-user token/cost breakdown — 'which user has how much usage'."""
+    """Per-user token/cost breakdown — 'which user has how much usage' (paginated)."""
     since = datetime.utcnow() - timedelta(days=days)
-    rows = (
+    base = (
         db.query(
             LlmUsageLog.user_id,
             func.count(LlmUsageLog.id),
@@ -391,47 +412,55 @@ def llm_usage_by_user(
         .filter(LlmUsageLog.created_at >= since)
         .group_by(LlmUsageLog.user_id)
         .order_by(func.sum(LlmUsageLog.cost_usd).desc())
-        .limit(limit)
-        .all()
     )
+    total = base.count()
+    rows = base.offset((page - 1) * page_size).limit(page_size).all()
     user_ids = [r[0] for r in rows if r[0]]
     emails = {u.id: u.email for u in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()} if user_ids else {}
-    return [
-        LlmUserUsage(
-            user_id=uid, user_email=emails.get(uid, "" if uid else "(unattributed)"),
-            total_calls=calls, total_tokens=int(tokens or 0), total_cost_usd=round(float(cost or 0), 6),
-            last_used_at=last.isoformat() if last else None,
-        )
+    items = [
+        {
+            "user_id": uid, "user_email": emails.get(uid, "" if uid else "(unattributed)"),
+            "total_calls": calls, "total_tokens": int(tokens or 0),
+            "total_cost_usd": round(float(cost or 0), 6),
+            "last_used_at": last.isoformat() if last else None,
+        }
         for uid, calls, tokens, cost, last in rows
     ]
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "pages": max(1, (total + page_size - 1) // page_size)}
 
 
-@router.get("/llm-usage/logs", response_model=List[LlmUsageLogOut])
+@router.get("/llm-usage/logs")
 def llm_usage_logs(
     days: int = Query(7, ge=1, le=365),
     purpose: Optional[str] = Query(None),
     provider: Optional[str] = Query(None),
     user_id: Optional[str] = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
     user: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
-    """Raw recent call log, filterable — for auditing individual calls."""
+    """Raw recent call log, filterable + paginated — for auditing individual calls."""
     q = _usage_query(db, days, purpose, provider)
     if user_id:
         q = q.filter(LlmUsageLog.user_id == user_id)
-    rows = q.order_by(LlmUsageLog.created_at.desc()).limit(limit).all()
+    q = q.order_by(LlmUsageLog.created_at.desc())
+    total = q.count()
+    rows = q.offset((page - 1) * page_size).limit(page_size).all()
     user_ids = [r.user_id for r in rows if r.user_id]
     emails = {u.id: u.email for u in db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()} if user_ids else {}
-    return [
-        LlmUsageLogOut(
-            id=r.id, user_id=r.user_id, user_email=emails.get(r.user_id, ""),
-            purpose=r.purpose, provider=r.provider, model=r.model, modality=r.modality,
-            input_tokens=r.input_tokens, output_tokens=r.output_tokens,
-            cached_tokens=r.cached_tokens, thoughts_tokens=r.thoughts_tokens,
-            total_tokens=r.total_tokens, cost_usd=r.cost_usd, currency=r.currency,
-            created_at=r.created_at.isoformat() if r.created_at else None,
-        ) for r in rows
+    items = [
+        {
+            "id": r.id, "user_id": r.user_id, "user_email": emails.get(r.user_id, ""),
+            "purpose": r.purpose, "provider": r.provider, "model": r.model, "modality": r.modality,
+            "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
+            "cached_tokens": r.cached_tokens, "thoughts_tokens": r.thoughts_tokens,
+            "total_tokens": r.total_tokens, "cost_usd": r.cost_usd, "currency": r.currency,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in rows
     ]
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "pages": max(1, (total + page_size - 1) // page_size)}
 
 
 # ---------- Make first user admin (admin-only) ----------

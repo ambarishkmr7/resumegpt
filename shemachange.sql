@@ -98,3 +98,144 @@ VALUES ('fc93ed332c934c0fb771a5c19ed24aa6', '754c909926b9481ca034e73f84b690c2', 
 INSERT IGNORE INTO author_posts (id, author_id, title, slug, excerpt, content, status, published_at)
 VALUES ('166e679165d645e28ac35423e6260418', '4c78d06138094560b52970cb3bbc9894', 'What Engineering Managers Actually Read First', 'what-em-read-first', 'A hiring manager''s 20-second scan, explained.', 'When I screened resumes, I looked for scope, impact, and ownership before anything else. This post walks through that 20-second scan so you can put the right signals where they''ll be seen.', 'published', NOW());
 
+
+-- ============================================================================
+-- Billing: subscription plans, refill packs, coupons & metered interview usage
+-- Target: MySQL. New tables are also auto-created by SQLAlchemy create_all();
+-- the ALTER statements below are the part create_all() cannot do (adding
+-- columns to existing tables) and must be run once on existing installs.
+-- MySQL has no "ADD COLUMN IF NOT EXISTS" — ignore "Duplicate column" errors
+-- if a column already exists.
+-- ============================================================================
+
+-- ── Extend existing tables ──────────────────────────────────────────────────
+ALTER TABLE subscriptions
+  ADD COLUMN plan_id VARCHAR(64) NULL,
+  ADD COLUMN interval VARCHAR(20) DEFAULT 'monthly',
+  ADD COLUMN razorpay_subscription_id VARCHAR(120) NULL,
+  ADD COLUMN current_period_start DATETIME NULL,
+  ADD COLUMN current_period_end DATETIME NULL,
+  ADD COLUMN cancel_at_period_end BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE payments
+  ADD COLUMN razorpay_subscription_id VARCHAR(120) NULL,
+  ADD COLUMN type VARCHAR(20) DEFAULT 'subscription',
+  ADD COLUMN plan_id VARCHAR(64) NULL,
+  ADD COLUMN refill_pack_id VARCHAR(64) NULL,
+  ADD COLUMN base_amount_inr INT NULL,
+  ADD COLUMN discount_inr INT DEFAULT 0,
+  ADD COLUMN coupon_code VARCHAR(64) NULL;
+
+-- ── New tables ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS plans (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  slug VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  description TEXT NULL,
+  price_inr INT DEFAULT 500,
+  currency VARCHAR(8) DEFAULT 'INR',
+  billing_interval VARCHAR(20) DEFAULT 'monthly',
+  interview_minutes INT DEFAULT 60,
+  allowances JSON NULL,
+  features JSON NULL,
+  badge VARCHAR(60) NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  is_default BOOLEAN DEFAULT FALSE,
+  display_order INT DEFAULT 100,
+  razorpay_plan_id VARCHAR(120) NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_plans_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS refill_packs (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  slug VARCHAR(80) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  description TEXT NULL,
+  price_inr INT DEFAULT 99,
+  currency VARCHAR(8) DEFAULT 'INR',
+  resource_type VARCHAR(40) DEFAULT 'interview_seconds',
+  amount_seconds INT DEFAULT 1800,
+  bonus_seconds INT DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  display_order INT DEFAULT 100,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_refill_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS coupons (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  code VARCHAR(64) NOT NULL,
+  description VARCHAR(255) NULL,
+  discount_type VARCHAR(16) DEFAULT 'percent',
+  discount_value INT DEFAULT 10,
+  applies_to VARCHAR(16) DEFAULT 'all',
+  min_amount_inr INT DEFAULT 0,
+  max_redemptions INT NULL,
+  redeemed_count INT DEFAULT 0,
+  per_user_limit INT DEFAULT 1,
+  starts_at DATETIME NULL,
+  expires_at DATETIME NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_coupons_code (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS coupon_redemptions (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  coupon_id VARCHAR(64) NOT NULL,
+  coupon_code VARCHAR(64) NULL,
+  user_id VARCHAR(64) NOT NULL,
+  payment_id VARCHAR(64) NULL,
+  discount_inr INT DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_redemptions_coupon (coupon_id),
+  KEY ix_redemptions_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS usage_accounts (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  resource_type VARCHAR(40) DEFAULT 'interview_seconds',
+  allowance_seconds INT DEFAULT 0,
+  used_seconds INT DEFAULT 0,
+  refill_seconds INT DEFAULT 0,
+  source VARCHAR(20) DEFAULT 'trial',
+  plan_id VARCHAR(64) NULL,
+  cycle_start DATETIME NULL,
+  cycle_end DATETIME NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY idx_usage_user_resource (user_id, resource_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS usage_events (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  resource_type VARCHAR(40) DEFAULT 'interview_seconds',
+  delta_seconds INT DEFAULT 0,
+  reason VARCHAR(40) DEFAULT 'interview_consume',
+  ref_id VARCHAR(64) NULL,
+  balance_after INT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_usage_events_user (user_id),
+  KEY ix_usage_events_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  `key` VARCHAR(80) NOT NULL PRIMARY KEY,
+  value JSON NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id VARCHAR(120) NOT NULL PRIMARY KEY,
+  event_type VARCHAR(80) NULL,
+  payload JSON NULL,
+  processed BOOLEAN DEFAULT FALSE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

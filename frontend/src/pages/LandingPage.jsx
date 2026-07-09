@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../api/client";
 import Topbar from "../components/Topbar.jsx";
@@ -117,6 +117,10 @@ export default function LandingPage() {
   const statResumes = siteStats.total_resumes !== null ? siteStats.total_resumes.toLocaleString("en-IN") : "…";
   const statAts = siteStats.ats_pass_rate !== null ? `${siteStats.ats_pass_rate}%` : "…";
 
+  // Single dashboard: logged-in users always use /dashboard. "/" is the public
+  // marketing landing for logged-out visitors only.
+  if (user) return <Navigate to="/dashboard" replace />;
+
   return (
     <>
       <Topbar />
@@ -198,7 +202,7 @@ export default function LandingPage() {
                 { stat: statResumes, label: "Resumes Created" },
                 { stat: statAts, label: "ATS Pass Rate" },
                 { stat: "30+", label: "Professional Templates" },
-                { stat: "₹1,999", label: "One-time Lifetime Plan" },
+                { stat: `₹${elitePrice}`, label: "Plans from / month" },
               ].map((s) => (
                 <div key={s.label} style={{ textAlign: "center", padding: 16, background: "#fff", borderRadius: 12, border: "1px solid #e2dccf" }}>
                   <div className="stat-number" style={{ fontSize: 28, fontWeight: 800, color: "#b45309" }}>{s.stat}</div>
@@ -234,7 +238,7 @@ export default function LandingPage() {
           {/* Plans */}
           <section className="section">
             <h2 className="section-title">Choose Your Plan</h2>
-            <p className="section-sub">One-time payment. Lifetime access. No recurring charges.</p>
+            <p className="section-sub">Monthly plans with AI mock-interview minutes. Cancel anytime · top up with refills.</p>
             <div className="plans-row two-col">
               <div className="plan-box">
                 <div className="plan-box-name">Free</div>
@@ -261,10 +265,10 @@ export default function LandingPage() {
                 )}
               </div>
               <div className={`plan-box elite ${isSubscribed ? "current" : ""}`}>
-                <div className="plan-box-popular">✨ LIFETIME ACCESS</div>
-                <div className="plan-box-name">Elite</div>
+                <div className="plan-box-popular">✨ MOST POPULAR</div>
+                <div className="plan-box-name">Starter</div>
                 <div className="plan-box-price"><span>₹</span>{elitePrice}</div>
-                <div className="plan-box-period">one-time · lifetime</div>
+                <div className="plan-box-period">per month</div>
                 <ul className="plan-box-features">
                   {eliteFeatures ? (
                     eliteFeatures.map((f, i) => <li key={i}>✓ {f}</li>)
@@ -289,7 +293,7 @@ export default function LandingPage() {
                     style={{ width: "100%", background: "linear-gradient(135deg, #d97706, #b45309)" }}
                     onClick={handleSubscribeClick}
                   >
-                    {user ? "Subscribe — ₹1,999" : "Login to Subscribe"}
+                    {user ? `Subscribe — ₹${elitePrice}/mo` : "Login to Subscribe"}
                   </button>
                 )}
               </div>
@@ -333,7 +337,7 @@ export default function LandingPage() {
             <h2 className="section-title">Frequently Asked Questions</h2>
             <div style={{ maxWidth: 720, margin: "0 auto" }}>
               {[
-                { q: "Is resumesGPT free to use?", a: "Yes! Creating resumes, using the AI analysis, career roadmap, and ATS scorer are completely free. A one-time Elite payment (₹1,999) unlocks career counselling, mock interviews, Interview GAP analysis, Job Posting via Agent and Priority support & early access." },
+                { q: "Is resumesGPT free to use?", a: "Yes! Creating resumes, using the AI analysis, career roadmap, and ATS scorer are completely free. A monthly plan (from ₹500/mo) adds AI mock-interview minutes, career counselling, Interview GAP analysis, Job Posting via Agent and priority support. Out of minutes mid-month? Top up instantly with a refill pack." },
                 { q: "How does the ATS score work?", a: "Our ATS engine uses a 100-point rubric scoring your resume on contact completeness, summary quality, experience bullet strength, skills coverage, education, and keyword match. Every deduction comes with a specific fix." },
                 { q: "Can I import my existing resume?", a: "Yes — upload any PDF or DOCX resume and we'll parse it into an editable format. You can then enhance it, switch templates, and download a polished version." },
                 { q: "Does it work for freshers with no experience?", a: "Absolutely. Our AI generates a strong entry-level resume based on your name, target role, and years of experience (0 works!). It includes a strong objective, education section, and relevant skills." },

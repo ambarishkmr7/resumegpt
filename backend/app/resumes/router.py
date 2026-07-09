@@ -513,12 +513,31 @@ async def mock_interview_live(websocket: WebSocket, resume_id: str, token: str =
             content = ResumeContent.model_validate(resume.content or {})
         except Exception:
             content = ResumeContent()
+
+        # ── Usage gate ──────────────────────────────────────────────────────
+        # Block the interview when the user has no interview minutes left, and
+        # cap this session to the smaller of their balance and the admin
+        # hard-cap. See app/subscription/usage.py.
+        from app.subscription import usage as usage_svc
+        summary = usage_svc.usage_summary(db, user_id)
+        available = int(summary.get("available_seconds") or 0)
+        hard_cap = int(usage_svc.get_setting(db, "interview_hard_cap_seconds") or 3600)
+        session_max = min(available, hard_cap)
+        if available <= 0:
+            await websocket.send_json({
+                "type": "error", "code": "usage_exhausted",
+                "message": "You're out of interview minutes. Purchase a plan or a refill to continue.",
+            })
+            await websocket.close(code=4402)
+            return
     finally:
         db.close()
 
     started_at = datetime.utcnow()
     with set_user(user_id):
-        result = await live_interview.run_interview_session(websocket, content, user_id=user_id)
+        result = await live_interview.run_interview_session(
+            websocket, content, user_id=user_id, max_seconds=session_max,
+        )
         ended_at = datetime.utcnow()
 
         # Report generation is a blocking LLM call — run it off the event loop.
@@ -553,6 +572,18 @@ async def mock_interview_live(websocket: WebSocket, resume_id: str, token: str =
         db.rollback()
     finally:
         db.close()
+
+    # ── Deduct the metered usage ────────────────────────────────────────────
+    consumed = int(result.get("duration_seconds") or 0)
+    if consumed > 0:
+        db = SessionLocal()
+        try:
+            from app.subscription import usage as usage_svc
+            usage_svc.consume(db, user_id, consumed, ref_id=session_id)
+        except Exception:
+            logger.exception("Failed to record interview usage for user %s", user_id)
+        finally:
+            db.close()
 
     try:
         await websocket.send_json({
@@ -843,12 +874,14 @@ def get_original(resume_id: str,
 @router.get("/{resume_id}/download")
 def download(resume_id: str, fmt: str = "pdf",
              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # Check subscription
+    # Check subscription (any active, non-expired plan)
     from app.models import Subscription
     sub = db.query(Subscription).filter(Subscription.user_id == user.id, Subscription.status == "active").first()
+    if sub and sub.current_period_end and sub.current_period_end < datetime.utcnow():
+        sub = None
     if not sub:
         logger.warning("Download denied — no active subscription for user %s", user.id)
-        raise HTTPException(status_code=402, detail="Subscription required. One-time payment of ₹299 for lifetime access.")
+        raise HTTPException(status_code=402, detail="An active subscription is required to download. Choose a plan to continue.")
     r = _get_owned(resume_id, user, db)
     content = ResumeContent.model_validate(r.content)
     safe = (r.title or "resume").replace(" ", "_")

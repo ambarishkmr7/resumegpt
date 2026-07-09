@@ -65,7 +65,7 @@ export default function CmsPage() {
 
     // Extract price — look for ₹ followed by digits in the raw text
     const priceMatch = rawText.match(/₹\s*([\d,]+)/);
-    const price = priceMatch ? priceMatch[1] : "1,999";
+    const price = priceMatch ? priceMatch[1] : "500";
 
     // Title comes from DB page.title field, strip leading emoji
     const title = (pageTitle || "Elite Plan").replace(/^[\p{Emoji}\s]+/u, "").trim();

@@ -46,11 +46,17 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
     id = Column(String, primary_key=True, default=_uuid)
     user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True, index=True)
-    plan = Column(String, default="elite")
-    status = Column(String, default="active")
-    amount = Column(Integer, default=1999)
+    plan = Column(String, default="elite")           # plan slug (back-compat)
+    plan_id = Column(String, ForeignKey("plans.id"), nullable=True, index=True)
+    status = Column(String, default="active")         # active | halted | cancelled | created
+    amount = Column(Integer, default=1999)            # INR rupees charged for the current plan
+    interval = Column(String, default="monthly")      # monthly (recurring)
     payment_id = Column(String, nullable=True)
     order_id = Column(String, nullable=True)
+    razorpay_subscription_id = Column(String, nullable=True, index=True)
+    current_period_start = Column(DateTime, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+    cancel_at_period_end = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -61,10 +67,17 @@ class Payment(Base):
     razorpay_order_id = Column(String, nullable=True, index=True)
     razorpay_payment_id = Column(String, nullable=True, index=True)
     razorpay_signature = Column(String, nullable=True)
-    plan = Column(String, default="elite")
-    amount = Column(Integer, default=299)
+    razorpay_subscription_id = Column(String, nullable=True, index=True)
+    plan = Column(String, default="elite")            # plan/refill slug
+    type = Column(String, default="subscription")     # subscription | refill
+    plan_id = Column(String, nullable=True, index=True)
+    refill_pack_id = Column(String, nullable=True, index=True)
+    amount = Column(Integer, default=299)             # INR rupees actually charged (after discount)
+    base_amount_inr = Column(Integer, nullable=True)  # INR before coupon discount
+    discount_inr = Column(Integer, default=0)         # INR discounted via coupon
+    coupon_code = Column(String, nullable=True)
     currency = Column(String, default="INR")
-    status = Column(String, default="created")
+    status = Column(String, default="created")        # created | paid | failed | refunded
     error_message = Column(Text, nullable=True)
     refund_id = Column(String, nullable=True)
     refund_amount = Column(Integer, nullable=True)
@@ -232,4 +245,137 @@ class ContactMessage(Base):
     type = Column(String, default="contact")   # "contact" or "feedback"
     rating = Column(Integer, nullable=True)     # 1-5 stars (feedback only)
     ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Billing / metered usage ───────────────────────────────────────────────────
+# All money is stored as INR **rupees** (int) for admin readability; multiply by
+# 100 to get paise only when calling Razorpay. Interview usage is metered in
+# seconds. The usage tables are generic (keyed by resource_type) so more
+# resources than "interview_seconds" can be metered later without a schema
+# change. See app/subscription/usage.py for the metering logic.
+
+class Plan(Base):
+    """An admin-managed monthly subscription tier (e.g. Starter ₹500 → 60 min)."""
+    __tablename__ = "plans"
+    id = Column(String, primary_key=True, default=_uuid)
+    slug = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    price_inr = Column(Integer, default=500)           # rupees / billing_interval
+    currency = Column(String, default="INR")
+    billing_interval = Column(String, default="monthly")
+    interview_minutes = Column(Integer, default=60)    # convenience mirror of allowances
+    allowances = Column(JSON, nullable=False, default=dict)  # {"interview_seconds": 3600}
+    features = Column(JSON, nullable=False, default=list)    # ["Feature line", ...]
+    badge = Column(String, nullable=True)              # e.g. "Popular"
+    is_active = Column(Boolean, default=True)
+    is_default = Column(Boolean, default=False)
+    display_order = Column(Integer, default=100)
+    razorpay_plan_id = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RefillPack(Base):
+    """An admin-managed one-time top-up of extra interview minutes."""
+    __tablename__ = "refill_packs"
+    id = Column(String, primary_key=True, default=_uuid)
+    slug = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    price_inr = Column(Integer, default=99)
+    currency = Column(String, default="INR")
+    resource_type = Column(String, default="interview_seconds")
+    amount_seconds = Column(Integer, default=1800)     # seconds granted
+    bonus_seconds = Column(Integer, default=0)         # promo bonus on top
+    is_active = Column(Boolean, default=True)
+    display_order = Column(Integer, default=100)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Coupon(Base):
+    """An admin-managed discount code applicable to plans and/or refills."""
+    __tablename__ = "coupons"
+    id = Column(String, primary_key=True, default=_uuid)
+    code = Column(String, unique=True, index=True, nullable=False)  # stored uppercase
+    description = Column(String, nullable=True)
+    discount_type = Column(String, default="percent")  # percent | flat
+    discount_value = Column(Integer, default=10)        # percent (0-100) or flat INR
+    applies_to = Column(String, default="all")          # all | plan | refill
+    min_amount_inr = Column(Integer, default=0)
+    max_redemptions = Column(Integer, nullable=True)    # null = unlimited
+    redeemed_count = Column(Integer, default=0)
+    per_user_limit = Column(Integer, default=1)
+    starts_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CouponRedemption(Base):
+    """Audit row per coupon use — enforces per-user limits and feeds P&L."""
+    __tablename__ = "coupon_redemptions"
+    id = Column(String, primary_key=True, default=_uuid)
+    coupon_id = Column(String, ForeignKey("coupons.id"), nullable=False, index=True)
+    coupon_code = Column(String, nullable=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    payment_id = Column(String, ForeignKey("payments.id"), nullable=True, index=True)
+    discount_inr = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UsageAccount(Base):
+    """Current metered balance for one (user, resource_type).
+
+    available = allowance_seconds (this cycle) + refill_seconds − used_seconds
+    """
+    __tablename__ = "usage_accounts"
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    resource_type = Column(String, default="interview_seconds", index=True)
+    allowance_seconds = Column(Integer, default=0)   # granted for the current cycle
+    used_seconds = Column(Integer, default=0)        # consumed this cycle
+    refill_seconds = Column(Integer, default=0)      # purchased top-ups (carry over)
+    source = Column(String, default="trial")         # subscription | trial | admin
+    plan_id = Column(String, nullable=True)
+    cycle_start = Column(DateTime, nullable=True)
+    cycle_end = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        Index("idx_usage_user_resource", "user_id", "resource_type", unique=True),
+    )
+
+
+class UsageEvent(Base):
+    """Append-only ledger of every grant/consume — audit + analytics."""
+    __tablename__ = "usage_events"
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    resource_type = Column(String, default="interview_seconds", index=True)
+    delta_seconds = Column(Integer, default=0)       # +grant / −consume
+    reason = Column(String, default="interview_consume")
+    ref_id = Column(String, nullable=True)           # session/payment id
+    balance_after = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AppSetting(Base):
+    """Key/value admin settings (JSON value). See app/subscription/usage.py."""
+    __tablename__ = "app_settings"
+    key = Column(String, primary_key=True)
+    value = Column(JSON, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class WebhookEvent(Base):
+    """Idempotency guard for Razorpay webhooks (keyed by x-razorpay-event-id)."""
+    __tablename__ = "webhook_events"
+    id = Column(String, primary_key=True)            # razorpay event id
+    event_type = Column(String, nullable=True)
+    payload = Column(JSON, nullable=True)
+    processed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)

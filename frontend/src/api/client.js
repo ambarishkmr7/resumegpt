@@ -247,11 +247,37 @@ export const api = {
   subscriptionStatus: () =>
     fetch(`${BASE}/api/subscription/status`, { headers: authHeaders() }).then(handle),
 
-  createOrder: (plan) =>
+  // Interview-minute balance (usage meter).
+  usageSummary: () =>
+    fetch(`${BASE}/api/subscription/usage`, { headers: authHeaders() }).then(handle),
+
+  // Public catalogue.
+  plans: () =>
+    fetch(`${BASE}/api/subscription/plans`, { headers: authHeaders() }).then(handle),
+  refillPacks: () =>
+    fetch(`${BASE}/api/subscription/refill-packs`, { headers: authHeaders() }).then(handle),
+
+  validateCoupon: (code, kind, target_id) =>
+    fetch(`${BASE}/api/subscription/coupon/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ code, kind, target_id }),
+    }).then(handle),
+
+  // kind: "plan" | "refill"; returns { order_id, amount(paise), razorpay_key_id, ... }
+  createOrder: ({ kind, target_id, coupon_code }) =>
     fetch(`${BASE}/api/subscription/create-order`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ plan }),
+      body: JSON.stringify({ kind, target_id, coupon_code }),
+    }).then(handle),
+
+  // Recurring subscription (Razorpay Subscriptions API / demo auto-activate).
+  createSubscription: (plan_id) =>
+    fetch(`${BASE}/api/subscription/create-subscription`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ plan_id }),
     }).then(handle),
 
   verifyPayment: (data) =>
@@ -259,13 +285,6 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(data),
-    }).then(handle),
-
-  checkout: (payment_id, plan = "elite") =>
-    fetch(`${BASE}/api/subscription/checkout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ payment_id, plan }),
     }).then(handle),
 
   paymentHistory: () =>
@@ -415,21 +434,97 @@ export const api = {
     }).then(handle),
   makeAdmin: () =>
     fetch(`${BASE}/api/admin/make-admin`, { method: "POST", headers: authHeaders() }).then(handle),
-  adminPayments: () =>
-    fetch(`${BASE}/api/admin/payments`, { headers: authHeaders() }).then(handle),
+  adminPayments: ({ page = 1, page_size = 20, status = "", type = "" } = {}) => {
+    const p = new URLSearchParams({ page: String(page), page_size: String(page_size) });
+    if (status) p.set("status", status);
+    if (type) p.set("type", type);
+    return fetch(`${BASE}/api/admin/payments?${p}`, { headers: authHeaders() }).then(handle);
+  },
 
   // ---- Admin: LLM Usage ----
   adminLlmUsageSummary: (days = 30) =>
     fetch(`${BASE}/api/admin/llm-usage/summary?days=${days}`, { headers: authHeaders() }).then(handle),
-  adminLlmUsageByUser: (days = 30, limit = 50) =>
-    fetch(`${BASE}/api/admin/llm-usage/by-user?days=${days}&limit=${limit}`, { headers: authHeaders() }).then(handle),
-  adminLlmUsageLogs: ({ days = 7, purpose = "", provider = "", userId = "", limit = 100 } = {}) => {
-    const params = new URLSearchParams({ days: String(days), limit: String(limit) });
+  adminLlmUsageByUser: (days = 30, page = 1, page_size = 20) =>
+    fetch(`${BASE}/api/admin/llm-usage/by-user?days=${days}&page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
+  adminLlmUsageLogs: ({ days = 7, purpose = "", provider = "", userId = "", page = 1, page_size = 50 } = {}) => {
+    const params = new URLSearchParams({ days: String(days), page: String(page), page_size: String(page_size) });
     if (purpose) params.set("purpose", purpose);
     if (provider) params.set("provider", provider);
     if (userId) params.set("user_id", userId);
     return fetch(`${BASE}/api/admin/llm-usage/logs?${params.toString()}`, { headers: authHeaders() }).then(handle);
   },
+
+  // ---- Admin: Billing (plans, refills, coupons, subs, usage, settings, P&L) ----
+  adminUsers: ({ page = 1, page_size = 20, q = "" } = {}) => {
+    const p = new URLSearchParams({ page: String(page), page_size: String(page_size) });
+    if (q) p.set("q", q);
+    return fetch(`${BASE}/api/admin/users?${p}`, { headers: authHeaders() }).then(handle);
+  },
+  adminPlans: ({ page = 1, page_size = 50 } = {}) =>
+    fetch(`${BASE}/api/admin/plans?page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
+  adminSavePlan: (id, body) =>
+    fetch(`${BASE}/api/admin/plans${id ? `/${id}` : ""}`, {
+      method: id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  adminDeletePlan: (id) =>
+    fetch(`${BASE}/api/admin/plans/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle),
+
+  adminRefills: ({ page = 1, page_size = 50 } = {}) =>
+    fetch(`${BASE}/api/admin/refill-packs?page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
+  adminSaveRefill: (id, body) =>
+    fetch(`${BASE}/api/admin/refill-packs${id ? `/${id}` : ""}`, {
+      method: id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  adminDeleteRefill: (id) =>
+    fetch(`${BASE}/api/admin/refill-packs/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle),
+
+  adminCoupons: ({ page = 1, page_size = 20 } = {}) =>
+    fetch(`${BASE}/api/admin/coupons?page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
+  adminSaveCoupon: (id, body) =>
+    fetch(`${BASE}/api/admin/coupons${id ? `/${id}` : ""}`, {
+      method: id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  adminDeleteCoupon: (id) =>
+    fetch(`${BASE}/api/admin/coupons/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle),
+
+  adminSubscriptions: ({ page = 1, page_size = 20, status = "" } = {}) => {
+    const p = new URLSearchParams({ page: String(page), page_size: String(page_size) });
+    if (status) p.set("status", status);
+    return fetch(`${BASE}/api/admin/subscriptions?${p}`, { headers: authHeaders() }).then(handle);
+  },
+  adminGrantSubscription: (user_email, plan_id) =>
+    fetch(`${BASE}/api/admin/subscriptions/grant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ user_email, plan_id }),
+    }).then(handle),
+  adminUsage: ({ page = 1, page_size = 20, q = "" } = {}) => {
+    const p = new URLSearchParams({ page: String(page), page_size: String(page_size) });
+    if (q) p.set("q", q);
+    return fetch(`${BASE}/api/admin/usage?${p}`, { headers: authHeaders() }).then(handle);
+  },
+  adminAdjustUsage: (userId, minutes) =>
+    fetch(`${BASE}/api/admin/usage/${userId}/adjust`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ minutes }),
+    }).then(handle),
+  adminSettings: () =>
+    fetch(`${BASE}/api/admin/settings`, { headers: authHeaders() }).then(handle),
+  adminSaveSettings: (body) =>
+    fetch(`${BASE}/api/admin/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    }).then(handle),
+  adminProfitLoss: (days = 30) =>
+    fetch(`${BASE}/api/admin/profit-loss?days=${days}`, { headers: authHeaders() }).then(handle),
 
   // ---- Public CMS ----
   trendingJobs: (resumeContent) =>

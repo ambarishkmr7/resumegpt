@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { SkeletonBlock, SkeletonLine, SkeletonTableRow } from "../components/Skeleton.jsx";
 import Markdown from "../components/Markdown.jsx";
+import AdminBilling from "../components/AdminBilling.jsx";
 
 function AdminSkeleton() {
   return (
@@ -116,8 +117,8 @@ export default function AdminPage() {
   const isContentDirty = editContent !== originalContent || editTitle !== originalTitle;
 
   useEffect(() => {
-    Promise.all([api.adminDashboard(), api.adminCmsPages(), api.adminPayments()])
-      .then(([s, p, pay]) => { setStats(s); setPages(p); setPayments(pay); })
+    Promise.all([api.adminDashboard(), api.adminCmsPages(), api.adminPayments({ page_size: 50 })])
+      .then(([s, p, pay]) => { setStats(s); setPages(p); setPayments(pay.items || []); })
       .catch((e) => {
         const msg = e.message || "";
         if (msg.includes("403") || msg.includes("Admin access required")) {
@@ -134,13 +135,13 @@ export default function AdminPage() {
     setLlmError("");
     Promise.all([
       api.adminLlmUsageSummary(llmDays),
-      api.adminLlmUsageByUser(llmDays, 50),
-      api.adminLlmUsageLogs({ days: llmDays, purpose: llmPurposeFilter, provider: llmProviderFilter, limit: 100 }),
+      api.adminLlmUsageByUser(llmDays, 1, 50),
+      api.adminLlmUsageLogs({ days: llmDays, purpose: llmPurposeFilter, provider: llmProviderFilter, page_size: 100 }),
     ])
       .then(([summary, users, logs]) => {
         setLlmSummary(summary);
-        setLlmUsers(users);
-        setLlmLogs(logs);
+        setLlmUsers(users.items || []);
+        setLlmLogs(logs.items || []);
         setLlmLoaded(true);
       })
       .catch((e) => setLlmError(e.message))
@@ -205,10 +206,24 @@ export default function AdminPage() {
           <button className={`rtab ${section === "overview" ? "active" : ""}`} onClick={() => setSection("overview")}>📊 Overview</button>
           <button className={`rtab ${section === "users" ? "active" : ""}`} onClick={() => setSection("users")}>👥 Users</button>
           <button className={`rtab ${section === "payments" ? "active" : ""}`} onClick={() => setSection("payments")}>💳 Payments</button>
+          <button className={`rtab ${section === "plans" ? "active" : ""}`} onClick={() => setSection("plans")}>📅 Plans</button>
+          <button className={`rtab ${section === "refills" ? "active" : ""}`} onClick={() => setSection("refills")}>⚡ Refills</button>
+          <button className={`rtab ${section === "coupons" ? "active" : ""}`} onClick={() => setSection("coupons")}>🎟️ Coupons</button>
+          <button className={`rtab ${section === "subscriptions" ? "active" : ""}`} onClick={() => setSection("subscriptions")}>🔁 Subscriptions</button>
+          <button className={`rtab ${section === "usage" ? "active" : ""}`} onClick={() => setSection("usage")}>⏱️ Usage</button>
+          <button className={`rtab ${section === "profit-loss" ? "active" : ""}`} onClick={() => setSection("profit-loss")}>📈 Profit &amp; Loss</button>
           <button className={`rtab ${section === "llm-usage" ? "active" : ""}`} onClick={() => setSection("llm-usage")}>🤖 LLM Usage</button>
+          <button className={`rtab ${section === "settings" ? "active" : ""}`} onClick={() => setSection("settings")}>⚙️ Settings</button>
           <button className={`rtab ${section === "cms" ? "active" : ""}`} onClick={() => { setSection("cms"); setEditSlug(null); }}>📝 CMS Pages</button>
           <button className={`rtab ${section === "account" ? "active" : ""}`} onClick={() => setSection("account")}>⚙️ Account</button>
         </div>
+
+        {/* ==================== BILLING (plans/refills/coupons/subs/usage/settings/P&L) ==================== */}
+        {["plans", "refills", "coupons", "subscriptions", "usage", "settings", "profit-loss"].includes(section) && (
+          <div className="admin-billing">
+            <AdminBilling section={section} />
+          </div>
+        )}
 
         {/* ==================== OVERVIEW ==================== */}
         {section === "overview" && stats && (

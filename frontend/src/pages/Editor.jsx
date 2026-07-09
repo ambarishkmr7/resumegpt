@@ -428,12 +428,12 @@ export default function Editor() {
                 : (
                   <div style={{ padding: "40px 24px", textAlign: "center" }}>
                     <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>
-                    <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Elite Plan Required</div>
+                    <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Subscription Required</div>
                     <div style={{ color: "var(--ink-soft)", marginBottom: 20, fontSize: 14 }}>
-                      Unlock AI Career Counseling, Mock Interviews, Job Agent, and more.
+                      Unlock AI Career Counseling, Mock Interviews, Job Agent, and more — plans from ₹500/mo.
                     </div>
                     <button className="btn btn-primary" onClick={() => setShowSub(true)}>
-                      Upgrade to Elite — ₹1,999
+                      Choose a plan
                     </button>
                   </div>
                 )

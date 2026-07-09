@@ -110,6 +110,16 @@ class Settings(BaseSettings):
     # Razorpay
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
+    # Secret configured on the Razorpay webhook (Dashboard → Settings → Webhooks).
+    # Used to verify the X-Razorpay-Signature on incoming webhook calls.
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+
+    # Billing / metered interview usage. INTERVIEW_MAX_SECONDS remains a hard
+    # per-session ceiling fallback; the real limit is the user's available
+    # balance (see app/subscription/usage.py) capped by the admin-configurable
+    # interview_hard_cap_seconds setting. USD_TO_INR_RATE seeds the Profit &
+    # Loss report's currency conversion (also overridable as an admin setting).
+    USD_TO_INR_RATE: float = 84.0
 
     # Logging
     LOG_LEVEL: str = "INFO"                 # DEBUG | INFO | WARNING | ERROR | CRITICAL

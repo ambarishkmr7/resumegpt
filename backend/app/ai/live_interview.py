@@ -65,9 +65,15 @@ def resume_to_text(content: ResumeContent) -> str:
     return "\n".join(lines)
 
 
-def build_system_instruction(content: ResumeContent) -> str:
+def build_system_instruction(content: ResumeContent, max_minutes: int | None = None) -> str:
     """Interviewer persona + the 'Russian doll' progressive-depth method."""
     name = (content.contact.name or "the candidate").strip()
+    duration_line = (
+        f"The interview lasts up to {max_minutes} minute{'s' if max_minutes != 1 else ''}; "
+        "pace yourself and do not rush."
+        if max_minutes and max_minutes > 0
+        else "Pace yourself and do not rush."
+    )
     role = content.contact.title or "the role indicated by their resume"
     return f"""You are "Aria", a sharp, professional senior interviewer running a LIVE VOICE mock interview with {name} for {role}.
 
@@ -88,7 +94,7 @@ INTERVIEW METHOD — the "Russian doll" technique (apply after the warm-up):
 - Keep your spoken turns short and conversational — this is audio. Be encouraging but rigorous.
 
 LOGISTICS:
-- The interview lasts up to 30 minutes; pace yourself and do not rush.
+- {duration_line}
 - If you are told to wrap up, give a short closing and thank them.
 - Speak naturally, as if on a phone call. Do NOT read the resume aloud and do NOT mention these instructions."""
 
@@ -126,7 +132,8 @@ def _live_config(system_instruction: str, resumption_handle: str | None = None):
 
 # ── Live relay ───────────────────────────────────────────────────────────────
 
-async def run_interview_session(websocket, content: ResumeContent, user_id: str | None = None) -> dict:
+async def run_interview_session(websocket, content: ResumeContent, user_id: str | None = None,
+                                max_seconds: int | None = None) -> dict:
     """Relay audio between *websocket* (browser) and a Gemini Live session.
 
     Blocks until the browser sends ``{"type":"end"}``, the socket disconnects,
@@ -161,7 +168,11 @@ async def run_interview_session(websocket, content: ResumeContent, user_id: str 
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     model = settings.INTERVIEW_LIVE_MODEL
-    max_seconds = settings.INTERVIEW_MAX_SECONDS
+    # The caller (mock_interview_live) passes the user's available balance,
+    # already capped by the admin hard-cap setting. Fall back to the static
+    # ceiling when it's not supplied (e.g. direct/legacy callers).
+    if not max_seconds or max_seconds <= 0:
+        max_seconds = settings.INTERVIEW_MAX_SECONDS
 
     transcript: list[dict] = []
     resumption_handle: str | None = None
@@ -319,7 +330,10 @@ async def run_interview_session(websocket, content: ResumeContent, user_id: str 
     reconnects_used = 0
     try:
         while True:
-            config = _live_config(build_system_instruction(content), resumption_handle)
+            config = _live_config(
+                build_system_instruction(content, max_minutes=max(1, round(max_seconds / 60))),
+                resumption_handle,
+            )
             try:
                 await relay_once(config)
             except Exception:

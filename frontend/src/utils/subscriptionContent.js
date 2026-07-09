@@ -6,7 +6,7 @@
 //   • Feature two
 //
 // Used by both the homepage Elite plan box and the subscription popup so they
-// stay in sync. Returns { price: "1,999"|null, features: string[] }.
+// stay in sync. Returns { price: "500"|null, features: string[] }.
 export function parseSubscription(raw) {
   if (!raw) return { price: null, features: [] };
   const priceMatch = raw.match(/₹\s*([\d,]+)/);

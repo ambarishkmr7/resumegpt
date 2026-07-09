@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/client.js";
+import SubscriptionModal from "../components/SubscriptionModal.jsx";
 
-const MAX_SECONDS = 30 * 60; // hard ceiling, mirrors backend INTERVIEW_MAX_SECONDS
+const FALLBACK_CAP = 60 * 60; // default per-session ceiling (backend enforces the real cap)
 const IN_RATE = 16000;       // mic capture + AudioContext rate (Gemini input)
 const OUT_RATE = 24000;      // Gemini output audio rate
 const MIC_FLUSH_SAMPLES = 1600; // ~100ms batches to Gemini
@@ -156,6 +157,11 @@ export default function MockInterview() {
 
   const [sessions, setSessions] = useState(null);
   const [activeReport, setActiveReport] = useState(null); // {report, audioUrl, durationSeconds}
+  const [usage, setUsage] = useState(null);      // interview-minute balance
+  const [capSeconds, setCapSeconds] = useState(FALLBACK_CAP); // this session's timer max
+  const [showSub, setShowSub] = useState(false); // purchase modal
+  const [subTab, setSubTab] = useState("plans");
+  const capRef = useRef(FALLBACK_CAP);
 
   // mutable refs (audio graph + socket)
   const wsRef = useRef(null);
@@ -180,7 +186,17 @@ export default function MockInterview() {
     catch { setSessions([]); }
   }, [id]);
 
-  useEffect(() => { loadSessions(); }, [loadSessions]);
+  const loadUsage = useCallback(async () => {
+    try {
+      const u = await api.usageSummary();
+      setUsage(u);
+      const cap = Math.min(u.available_seconds || 0, FALLBACK_CAP) || FALLBACK_CAP;
+      capRef.current = cap;
+      setCapSeconds(cap);
+    } catch { /* meter is best-effort */ }
+  }, []);
+
+  useEffect(() => { loadSessions(); loadUsage(); }, [loadSessions, loadUsage]);
 
   const cleanup = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -262,6 +278,14 @@ export default function MockInterview() {
   }, [cleanup]);
 
   const startInterview = useCallback(async () => {
+    // Refresh the balance and block if the user is out of minutes.
+    try {
+      const u = await api.usageSummary();
+      setUsage(u);
+      if ((u.available_seconds || 0) <= 0) { setSubTab("refills"); setShowSub(true); return; }
+      const cap = Math.min(u.available_seconds || 0, FALLBACK_CAP) || FALLBACK_CAP;
+      capRef.current = cap; setCapSeconds(cap);
+    } catch { /* fall through — backend still enforces the cap */ }
     setError(""); setActiveReport(null); setElapsed(0); setMuted(false);
     endedRef.current = false; pendingSessionRef.current = null;
     setStatus("Requesting microphone…"); setView("live");
@@ -327,7 +351,7 @@ export default function MockInterview() {
         timerRef.current = setInterval(() => {
           setElapsed((prev) => {
             const next = prev + 1;
-            if (next >= MAX_SECONDS) endInterview();
+            if (next >= capRef.current) endInterview();
             return next;
           });
         }, 1000);
@@ -355,9 +379,17 @@ export default function MockInterview() {
         } else if (msg.type === "report") {
           handleReport(msg.data);
         } else if (msg.type === "error") {
-          setError(msg.message || "The interview ended unexpectedly.");
-          cleanup();
-          setView("home");
+          if (msg.code === "usage_exhausted") {
+            cleanup();
+            setView("home");
+            loadUsage();
+            setSubTab("refills");
+            setShowSub(true);
+          } else {
+            setError(msg.message || "The interview ended unexpectedly.");
+            cleanup();
+            setView("home");
+          }
         }
       };
 
@@ -377,7 +409,7 @@ export default function MockInterview() {
       setView("home");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, endInterview, handleReport, cleanup]);
+  }, [id, endInterview, handleReport, cleanup, loadUsage]);
 
   const openSession = async (row) => {
     try {
@@ -411,10 +443,45 @@ export default function MockInterview() {
             <h2>Practice a real-time voice interview</h2>
             <p>
               An AI interviewer reads your resume, then asks progressively deeper questions
-              based on your background. Your mic stays open for the whole session (up to 30 minutes).
-              You'll get a scored report — and the recording — at the end.
+              based on your background. You'll get a scored report — and the recording — at the end.
             </p>
-            <button className="btn btn-primary mi-start" onClick={startInterview}>Start Interview</button>
+
+            {usage && (
+              <div className="mi-usage-meter" style={{
+                margin: "0 auto 14px", maxWidth: 360, padding: "10px 14px",
+                border: "1px solid var(--line)", borderRadius: 12,
+                background: (usage.available_seconds || 0) <= 0 ? "rgba(220,38,38,0.06)" : "rgba(16,185,129,0.06)",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14 }}>
+                  <span>⏱️ Interview balance</span>
+                  <strong>{usage.available_minutes} min left</strong>
+                </div>
+                <div style={{ height: 6, background: "var(--line)", borderRadius: 4, marginTop: 6, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${Math.min(100, ((usage.available_seconds || 0) / Math.max(1, (usage.allowance_seconds || 0) + (usage.refill_seconds || 0))) * 100)}%`,
+                    background: (usage.available_seconds || 0) <= 0 ? "#dc2626" : "#10b981",
+                  }} />
+                </div>
+                <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
+                  {usage.plan_name ? `Plan: ${usage.plan_name}` : "Free trial"}
+                  {usage.cycle_end ? ` · resets ${new Date(usage.cycle_end).toLocaleDateString()}` : ""}
+                </div>
+              </div>
+            )}
+
+            {usage && (usage.available_seconds || 0) <= 0 ? (
+              <>
+                <div className="mi-error" style={{ marginBottom: 10 }}>
+                  You're out of interview minutes. Purchase a plan or a refill to continue.
+                </div>
+                <button className="btn btn-primary mi-start" onClick={() => { setSubTab("refills"); setShowSub(true); }}>
+                  Buy more minutes
+                </button>
+              </>
+            ) : (
+              <button className="btn btn-primary mi-start" onClick={startInterview}>Start Interview</button>
+            )}
             <div className="mi-tip">Tip: use headphones and find a quiet room for the best experience.</div>
           </div>
 
@@ -447,7 +514,7 @@ export default function MockInterview() {
         <div className="mi-live">
           <div className={`mi-orb ${aiSpeaking ? "speaking" : "listening"}`}>🎙️</div>
           <div className="mi-status">{status || "Connecting…"}</div>
-          <div className="mi-timer">{fmtTime(elapsed)} <span className="mi-timer-max">/ {fmtTime(MAX_SECONDS)}</span></div>
+          <div className="mi-timer">{fmtTime(elapsed)} <span className="mi-timer-max">/ {fmtTime(capSeconds)}</span></div>
           <div className="mi-controls">
             <button className={`btn ${muted ? "btn-primary" : "btn-ghost"}`} onClick={() => setMuted(m => !m)}>
               {muted ? "🔇 Unmute" : "🎤 Mute"}
@@ -466,10 +533,18 @@ export default function MockInterview() {
             durationSeconds={activeReport?.durationSeconds}
           />
           <div className="mi-report-actions">
-            <button className="btn btn-ghost" onClick={() => { setActiveReport(null); setView("home"); loadSessions(); }}>← Previous interviews</button>
+            <button className="btn btn-ghost" onClick={() => { setActiveReport(null); setView("home"); loadSessions(); loadUsage(); }}>← Previous interviews</button>
             <button className="btn btn-primary" onClick={() => { setActiveReport(null); startInterview(); }}>Start another</button>
           </div>
         </div>
+      )}
+
+      {showSub && (
+        <SubscriptionModal
+          initialTab={subTab}
+          onClose={() => setShowSub(false)}
+          onSuccess={() => { setShowSub(false); loadUsage(); }}
+        />
       )}
     </div>
   );
