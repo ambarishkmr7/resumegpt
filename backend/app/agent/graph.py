@@ -19,6 +19,22 @@ from app.mcp_server import mcp as mcp_server
 
 logger = logging.getLogger(__name__)
 
+# The compiled agent is stateless across requests (per-thread state lives in the
+# checkpointer), so build it once and reuse it rather than re-extracting MCP
+# tools + re-initialising the model on every message.
+_AGENT = None
+_AGENT_MODEL_NAME = None
+
+
+async def _get_agent():
+    """Return the process-wide compiled agent, building it on first use."""
+    global _AGENT, _AGENT_MODEL_NAME
+    if _AGENT is None:
+        checkpointer = await get_checkpointer()
+        store = await get_store()
+        _AGENT, _AGENT_MODEL_NAME = _build_agent(checkpointer, store)
+    return _AGENT, _AGENT_MODEL_NAME
+
 
 def extract_string_content(content: Any) -> str:
     """Safely extract string content from LangChain's message content field."""
@@ -76,6 +92,70 @@ IMPORTANT: When using tools, always actually call them — don't just describe w
 """
 
 
+def _normalize_model_name(name: str) -> str:
+    """Ensure a bare Gemini model id carries the LangChain provider prefix."""
+    if ":" not in name and "gemini" in name.lower():
+        return f"google_genai:{name}"
+    return name
+
+
+def _build_middleware(settings, llm):
+    """Production middleware stack for the agent.
+
+    - SummarizationMiddleware: once a thread's history crosses the token
+      trigger, older turns are replaced by an LLM-written summary while the
+      most recent messages are kept verbatim — keeps long chats inside the
+      context window and keeps token cost bounded.
+    - Model/Tool call-limit middlewares: hard caps on how many LLM/tool calls
+      one user turn may make, so a tool-calling loop can't run away on cost.
+    - ModelRetryMiddleware: transparently retries transient provider failures
+      (rate limits, timeouts, 5xx) with exponential backoff + jitter.
+
+    All thresholds come from config so they can be tuned without a code change.
+    """
+    from langchain.agents.middleware import (
+        ModelCallLimitMiddleware,
+        ModelRetryMiddleware,
+        SummarizationMiddleware,
+        ToolCallLimitMiddleware,
+    )
+
+    stack = []
+
+    # Summarizer — reuse the main model unless a cheaper one is configured.
+    summary_model = llm
+    if settings.CHATBOT_SUMMARY_MODEL:
+        try:
+            summary_model = init_chat_model(
+                model=_normalize_model_name(settings.CHATBOT_SUMMARY_MODEL),
+                temperature=0.3,
+            )
+        except Exception:
+            logger.warning("CHATBOT_SUMMARY_MODEL init failed — reusing main model for summaries")
+            summary_model = llm
+    stack.append(SummarizationMiddleware(
+        model=summary_model,
+        trigger=("tokens", settings.CHATBOT_SUMMARY_TRIGGER_TOKENS),
+        keep=("messages", settings.CHATBOT_SUMMARY_KEEP_MESSAGES),
+    ))
+
+    # Runaway-loop guardrails (end the turn gracefully rather than erroring).
+    if settings.CHATBOT_MAX_MODEL_CALLS_PER_TURN:
+        stack.append(ModelCallLimitMiddleware(
+            run_limit=settings.CHATBOT_MAX_MODEL_CALLS_PER_TURN, exit_behavior="end",
+        ))
+    if settings.CHATBOT_MAX_TOOL_CALLS_PER_TURN:
+        stack.append(ToolCallLimitMiddleware(
+            run_limit=settings.CHATBOT_MAX_TOOL_CALLS_PER_TURN, exit_behavior="end",
+        ))
+
+    # Resilience against transient provider errors.
+    if settings.CHATBOT_MODEL_MAX_RETRIES:
+        stack.append(ModelRetryMiddleware(max_retries=settings.CHATBOT_MODEL_MAX_RETRIES))
+
+    return stack
+
+
 def _build_agent(checkpointer, store):
     """Build and return a compiled LangGraph agent with MCP tools + memory."""
     settings = get_settings()
@@ -86,9 +166,7 @@ def _build_agent(checkpointer, store):
     if settings.ANTHROPIC_API_KEY:
         os.environ.setdefault("ANTHROPIC_API_KEY", settings.ANTHROPIC_API_KEY)
 
-    model_name = settings.AI_MODEL or "google_genai:gemini-flash-lite-latest"
-    if ":" not in model_name and "gemini" in model_name.lower():
-        model_name = f"google_genai:{model_name}"
+    model_name = _normalize_model_name(settings.AI_MODEL or "google_genai:gemini-flash-lite-latest")
 
     llm = init_chat_model(
         model=model_name,
@@ -97,12 +175,15 @@ def _build_agent(checkpointer, store):
     )
 
     tools = _get_mcp_tools()
-    logger.info("Building agent with model=%s tools=%d", model_name, len(tools))
+    middleware = _build_middleware(settings, llm)
+    logger.info("Building agent with model=%s tools=%d middleware=%d",
+                model_name, len(tools), len(middleware))
 
     agent = create_agent(
         model=llm,
         tools=tools,
         system_prompt=_SYSTEM_PROMPT,
+        middleware=middleware,
         checkpointer=checkpointer,
         store=store,
     )
@@ -166,9 +247,7 @@ def _log_chat_usage(messages: list, model_name: str, user_id: str) -> None:
 
 async def agent_chat(user_id: str, thread_id: str, message: str) -> dict[str, Any]:
     """Send a message to the agent and return the response."""
-    checkpointer = await get_checkpointer()
-    store = await get_store()
-    agent, model_name = _build_agent(checkpointer, store)
+    agent, model_name = await _get_agent()
 
     config = {
         "configurable": {

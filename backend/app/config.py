@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     GROK_API_KEY: str = ""
     GROK_MODEL: str = "grok-3-mini"  # or grok-3 for full model
 
+    # ── Career chatbot (LangChain agent) production tuning ────────────────────
+    # The agent (app/agent/graph.py) runs a middleware stack for production
+    # robustness. SummarizationMiddleware compresses old turns once a thread
+    # grows past CHATBOT_SUMMARY_TRIGGER_TOKENS (keeping the last KEEP_MESSAGES),
+    # so long conversations stay within the context window and stay cheap. The
+    # call-limit middlewares cap runaway tool/model loops per turn; the retry
+    # middleware rides out transient provider errors (rate limits, timeouts).
+    CHATBOT_SUMMARY_TRIGGER_TOKENS: int = 6000   # summarize once history exceeds this
+    CHATBOT_SUMMARY_KEEP_MESSAGES: int = 12      # verbatim messages kept after summarizing
+    CHATBOT_SUMMARY_MODEL: str = ""              # optional cheaper model; "" = reuse main model
+    CHATBOT_MAX_MODEL_CALLS_PER_TURN: int = 12   # LLM calls per user turn (0 = unlimited)
+    CHATBOT_MAX_TOOL_CALLS_PER_TURN: int = 10    # tool calls per user turn (0 = unlimited)
+    CHATBOT_MODEL_MAX_RETRIES: int = 2           # retries on transient LLM errors
+
     # ── LLM usage & cost tracking ────────────────────────────────────────────
     # Every LLM call is logged (tokens + computed cost) to the llm_usage_logs
     # table for the admin "LLM Usage" dashboard. Set LLM_USAGE_TRACKING_ENABLED
