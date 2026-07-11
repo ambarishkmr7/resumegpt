@@ -278,6 +278,8 @@ async def agent_chat(user_id: str, thread_id: str, message: str) -> dict[str, An
 
     # --- NEW: Save thread metadata to Store so History loads properly ---
     try:
+        from app.agent.memory import get_store
+        store = await get_store()
         # Preserve the title of the FIRST question asked in this thread
         existing_item = await store.aget(("agent_threads", user_id), thread_id)
         if existing_item and existing_item.value and existing_item.value.get("title"):

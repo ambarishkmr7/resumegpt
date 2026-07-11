@@ -1,0 +1,10 @@
+# First launch shows onboarding; skip straight to login.
+appId: com.resumesgpt.app
+---
+- runFlow:
+    when:
+      visible:
+        id: "onboarding-skip"
+    commands:
+      - tapOn:
+          id: "onboarding-skip"

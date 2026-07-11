@@ -1,0 +1,21 @@
+# Log in with the seeded E2E user (assumes login screen is visible).
+appId: com.resumesgpt.app
+---
+- extendedWaitUntil:
+    visible:
+      id: "login-email"
+    timeout: 30000
+- tapOn:
+    id: "login-email"
+- inputText: "e2e.tester@example.com"
+- hideKeyboard
+- tapOn:
+    id: "login-password"
+- inputText: "e2e-password-123"
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 30000

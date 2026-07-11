@@ -1,0 +1,41 @@
+# Free user downloads a resume → 402 → subscription sheet with plan cards.
+appId: com.resumesgpt.app
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- runFlow: helpers/login.yaml
+- extendedWaitUntil:
+    visible:
+      id: "resume-card-0"
+    timeout: 30000
+- tapOn:
+    id: "resume-card-0"
+- extendedWaitUntil:
+    visible:
+      id: "editor-scroll"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: "editor-download"
+- tapOn:
+    id: "editor-download"
+- tapOn: "PDF"
+# Non-subscriber → paywall sheet must open with the plans/refills tabs.
+- extendedWaitUntil:
+    visible:
+      id: "subscription-screen"
+    timeout: 30000
+- assertVisible: "Get more interview minutes"
+- extendedWaitUntil:
+    visible:
+      id: "sub-item-0"
+    timeout: 30000
+- tapOn:
+    id: "sub-tab-refills"
+- extendedWaitUntil:
+    visible:
+      id: "sub-item-0"
+    timeout: 15000
+- tapOn: "Maybe later"

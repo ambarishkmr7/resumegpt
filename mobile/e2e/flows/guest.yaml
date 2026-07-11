@@ -1,0 +1,19 @@
+# Guest mode: continue without an account, see the claim banner on Home.
+appId: com.resumesgpt.app
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- extendedWaitUntil:
+    visible:
+      id: "login-guest"
+    timeout: 30000
+- tapOn:
+    id: "login-guest"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 30000
+- assertVisible:
+    id: "guest-banner"

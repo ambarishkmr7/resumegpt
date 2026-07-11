@@ -1,0 +1,25 @@
+# No-op on release builds (JS is embedded — launchApp goes straight in).
+# On debug dev-client builds the Expo dev launcher shows first: deep-link the
+# Metro URL twice (cold start swallows the first), then dismiss the dev menu.
+appId: com.resumesgpt.app
+env:
+  DEV_URL: "exp+resumesgpt://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8081"
+---
+- runFlow:
+    when:
+      visible: "Development Build"
+    commands:
+      - openLink: ${DEV_URL}
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - openLink: ${DEV_URL}
+      - extendedWaitUntil:
+          notVisible: "Development Build"
+          timeout: 60000
+      - waitForAnimationToEnd:
+          timeout: 5000
+      - runFlow:
+          when:
+            visible: "Continue"
+          commands:
+            - tapOn: "Continue"

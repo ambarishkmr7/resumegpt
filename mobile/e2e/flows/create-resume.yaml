@@ -1,0 +1,38 @@
+# AI-generate a resume from name/title/years and land in the editor.
+# Needs GEMINI_API_KEY on the backend; generation takes ~20-40s.
+# Note: no hideKeyboard here — on pushed screens Maestro's fallback (back
+# press) pops the route. Tapping the next field directly is safe.
+appId: com.resumesgpt.app
+tags:
+  - ai
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- runFlow: helpers/login.yaml
+- tapOn:
+    id: "home-create"
+- extendedWaitUntil:
+    visible:
+      id: "new-title"
+    timeout: 15000
+- tapOn:
+    id: "new-name"
+- inputText: "E2E Tester"
+- tapOn:
+    id: "new-title"
+- inputText: "QA Engineer"
+- tapOn:
+    id: "new-years"
+- inputText: "4"
+- scrollUntilVisible:
+    element:
+      id: "new-submit"
+- tapOn:
+    id: "new-submit"
+- extendedWaitUntil:
+    visible:
+      id: "section-contact"
+    timeout: 120000
+- assertVisible: "Contact"

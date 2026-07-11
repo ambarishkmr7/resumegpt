@@ -1,0 +1,29 @@
+# Open ATS scoring for the seeded resume and assert a score renders.
+appId: com.resumesgpt.app
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- runFlow: helpers/login.yaml
+- extendedWaitUntil:
+    visible:
+      id: "resume-card-0"
+    timeout: 30000
+- tapOn:
+    id: "resume-card-0"
+- extendedWaitUntil:
+    visible: "🎯 ATS score"
+    timeout: 30000
+- tapOn: "🎯 ATS score"
+- extendedWaitUntil:
+    visible:
+      id: "ats-ring"
+    timeout: 30000
+# Initial no-JD score can take a few seconds (server-side rubric).
+- extendedWaitUntil:
+    visible: "Score against a job"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "Breakdown"
+    timeout: 45000

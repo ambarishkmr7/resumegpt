@@ -1,0 +1,43 @@
+# Login with the seeded E2E user, land on Home, then log out.
+appId: com.resumesgpt.app
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- extendedWaitUntil:
+    visible:
+      id: "login-email"
+    timeout: 30000
+- tapOn:
+    id: "login-email"
+- inputText: "e2e.tester@example.com"
+- hideKeyboard
+- tapOn:
+    id: "login-password"
+- inputText: "e2e-password-123"
+- hideKeyboard
+- tapOn:
+    id: "login-submit"
+- extendedWaitUntil:
+    visible:
+      id: "home-screen"
+    timeout: 30000
+- assertVisible: "My resumes"
+# Log out via Profile tab
+- tapOn:
+    id: "tab-profile"
+- extendedWaitUntil:
+    visible:
+      id: "profile-logout"
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      id: "profile-logout"
+- tapOn:
+    id: "profile-logout"
+- tapOn: "Log out"
+- extendedWaitUntil:
+    visible:
+      id: "login-submit"
+    timeout: 20000

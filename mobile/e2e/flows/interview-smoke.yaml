@@ -1,0 +1,50 @@
+# Live interview smoke test: connect, see the timer tick, end early.
+# Requires GEMINI_API_KEY on the backend and interview minutes on the account.
+# Emulator mic needs host audio (-allow-host-audio) for real conversation,
+# but connection + timer + end-report round trip works without speaking.
+appId: com.resumesgpt.app
+tags:
+  - ai
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- runFlow: helpers/login.yaml
+- tapOn:
+    id: "tab-interview"
+# With multiple resumes a picker shows first — choose the first one.
+- runFlow:
+    when:
+      visible:
+        id: "picker-resume-0"
+    commands:
+      - tapOn:
+          id: "picker-resume-0"
+- extendedWaitUntil:
+    visible:
+      id: "interview-start"
+    timeout: 30000
+- tapOn:
+    id: "interview-start"
+# Grant mic permission when prompted.
+- runFlow:
+    when:
+      visible: "While using the app"
+    commands:
+      - tapOn: "While using the app"
+- extendedWaitUntil:
+    visible:
+      id: "live-screen"
+    timeout: 30000
+# Wait until the session is actually live (status line goes to Listening/AI speaking).
+- extendedWaitUntil:
+    visible:
+      id: "live-timer"
+    timeout: 45000
+- tapOn:
+    id: "live-end"
+# Report generation can take a while.
+- extendedWaitUntil:
+    visible: "Interview report"
+    timeout: 120000

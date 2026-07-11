@@ -260,9 +260,18 @@ async def get_profile_photo(
     key: str | None = None,
 ):
     """Serve a profile photo. For S3, redirects to a presigned URL.
-    For local storage, streams the file directly."""
+    For local storage, streams the file directly.
+
+    Unauthenticated by design (so <img src> works without an Authorization
+    header) — the key is an unguessable per-user UUID, acting as a capability
+    token. But it MUST be scoped to the profile_photos/ prefix, otherwise the
+    same endpoint becomes an arbitrary-object read across all storage keys
+    (e.g. other users' resumes) for anyone who can guess/observe a key.
+    """
     if not key:
         raise HTTPException(status_code=400, detail="Missing key parameter")
+    if not key.startswith("profile_photos/") or ".." in key:
+        raise HTTPException(status_code=400, detail="Invalid key")
 
     settings = get_settings()
     storage = StorageService(settings)

@@ -1,0 +1,48 @@
+# Open the seeded resume, edit the summary, wait for autosave, relaunch,
+# and assert the edit persisted.
+appId: com.resumesgpt.app
+env:
+  MARKER: "Autosave marker 42."
+---
+- launchApp:
+    clearState: true
+- runFlow: helpers/open-from-dev-launcher.yaml
+- runFlow: helpers/skip-onboarding-if-shown.yaml
+- runFlow: helpers/login.yaml
+- extendedWaitUntil:
+    visible:
+      id: "resume-card-0"
+    timeout: 30000
+- tapOn:
+    id: "resume-card-0"
+- extendedWaitUntil:
+    visible:
+      id: "section-summary"
+    timeout: 30000
+- tapOn:
+    id: "section-summary"
+- tapOn:
+    id: "summary-input"
+- eraseText: 1000
+- inputText: ${MARKER}
+# No hideKeyboard — on pushed screens its back-press fallback pops the route.
+# The autosave pill lives in the header, visible above the keyboard.
+- extendedWaitUntil:
+    visible: "Saved ✓"
+    timeout: 20000
+# Relaunch (no clearState — token survives) and verify persistence.
+- launchApp
+- runFlow: helpers/open-from-dev-launcher.yaml
+- extendedWaitUntil:
+    visible:
+      id: "resume-card-0"
+    timeout: 30000
+- tapOn:
+    id: "resume-card-0"
+- extendedWaitUntil:
+    visible:
+      id: "section-summary"
+    timeout: 30000
+- tapOn:
+    id: "section-summary"
+- assertVisible: ${MARKER}

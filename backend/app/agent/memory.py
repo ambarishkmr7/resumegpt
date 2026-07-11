@@ -76,7 +76,14 @@ async def _get_pool():
         conninfo=dsn,
         max_size=10,
         open=False,
-        kwargs={"autocommit": True, "prepare_threshold": 0},
+        kwargs={
+            "autocommit": True, 
+            "prepare_threshold": 0,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5
+        },
     )
     await _pool.open()
     return _pool
