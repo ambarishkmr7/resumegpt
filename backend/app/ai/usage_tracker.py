@@ -173,3 +173,9 @@ def record_usage(
         db.rollback()
     finally:
         db.close()
+
+    # Bill the tokens against the user's monthly token allowance (plan-metered).
+    # Uses its own session and swallows errors — same contract as the log above.
+    if user_id and total_tokens > 0:
+        from app.subscription.usage import consume_tokens_standalone
+        consume_tokens_standalone(user_id, total_tokens, ref_id=purpose)

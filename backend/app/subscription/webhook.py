@@ -22,7 +22,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Payment, Subscription, WebhookEvent
 from app.subscription import usage as usage_svc
-from app.subscription.router import _fulfil_payment
+from app.subscription.router import _fulfil_payment, cancel_payment_expiry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subscription", tags=["subscription-webhook"])
@@ -94,6 +94,7 @@ def _handle_event(db: Session, event_type: str, payload: dict) -> None:
             payment.status = "paid"
             _fulfil_payment(db, payment)
             db.commit()
+            cancel_payment_expiry(payment.id)
             logger.info("Webhook fulfilled order %s (payment=%s)", order_id, payment_id)
 
     elif event_type in ("subscription.activated", "subscription.charged"):
@@ -110,6 +111,7 @@ def _handle_event(db: Session, event_type: str, payload: dict) -> None:
                 payment.status = "paid"
             _fulfil_payment(db, payment)
             db.commit()
+            cancel_payment_expiry(payment.id)
             logger.info("Webhook activated subscription %s (user=%s)", rzp_sub_id, payment.user_id)
         elif sub:
             # Renewal charge → grant a fresh monthly cycle.

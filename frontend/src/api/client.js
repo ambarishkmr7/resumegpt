@@ -247,9 +247,13 @@ export const api = {
   subscriptionStatus: () =>
     fetch(`${BASE}/api/subscription/status`, { headers: authHeaders() }).then(handle),
 
-  // Interview-minute balance (usage meter).
+  // Usage meters: interview minutes + AI-token % + daily resume-upload quota.
   usageSummary: () =>
     fetch(`${BASE}/api/subscription/usage`, { headers: authHeaders() }).then(handle),
+
+  // Dashboard nudges: recharge popup + personal loyalty coupon.
+  subscriptionNudges: () =>
+    fetch(`${BASE}/api/subscription/nudges`, { headers: authHeaders() }).then(handle),
 
   // Public catalogue.
   plans: () =>
@@ -509,11 +513,12 @@ export const api = {
     if (q) p.set("q", q);
     return fetch(`${BASE}/api/admin/usage?${p}`, { headers: authHeaders() }).then(handle);
   },
-  adminAdjustUsage: (userId, minutes) =>
+  // body: { minutes } for interview accounts, { tokens } for llm_tokens accounts.
+  adminAdjustUsage: (userId, body) =>
     fetch(`${BASE}/api/admin/usage/${userId}/adjust`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ minutes }),
+      body: JSON.stringify(body),
     }).then(handle),
   adminSettings: () =>
     fetch(`${BASE}/api/admin/settings`, { headers: authHeaders() }).then(handle),

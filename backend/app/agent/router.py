@@ -8,11 +8,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.agent.graph import agent_chat, extract_string_content
 from app.agent.memory import get_checkpointer, get_store
 from app.core.deps import get_current_user
+from app.database import get_db
 from app.models import User
+from app.subscription import usage as usage_svc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -30,8 +33,16 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, user: User = Depends(get_current_user)):
+async def chat(request: ChatRequest, user: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
     """Send a message to the job search agent."""
+    # Chat is billed against the monthly AI-token allowance.
+    if not usage_svc.tokens_available(db, user.id):
+        raise HTTPException(
+            status_code=402,
+            detail=("You've used 100% of your monthly AI usage. "
+                    "Upgrade or renew your plan to continue chatting."),
+        )
     thread_id = request.thread_id or uuid.uuid4().hex
 
     try:

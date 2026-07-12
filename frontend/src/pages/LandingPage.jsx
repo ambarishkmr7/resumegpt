@@ -26,8 +26,10 @@ export default function LandingPage() {
   const fileRef = useRef();
   const [siteStats, setSiteStats] = useState({ total_resumes: null, ats_pass_rate: null });
   const [resumes, setResumes] = useState([]);
-  // Homepage Elite plan content comes from cms_pages record 'cms_sub'.
+  // Homepage Elite plan content comes from cms_pages record 'cms_sub'
+  // (fallback only — live plans come from the DB via /api/subscription/plans).
   const [subContent, setSubContent] = useState(null);
+  const [plans, setPlans] = useState([]);
   const parsedSub = parseSubscription(subContent);
   const elitePrice = parsedSub.price || "1,999";
   const eliteFeatures = parsedSub.features.length ? parsedSub.features : null;
@@ -39,6 +41,7 @@ export default function LandingPage() {
   useEffect(() => {
     api.getPublicStats().then(setSiteStats).catch(() => {});
     api.getSubscriptionContent().then((d) => setSubContent(d && d.content)).catch(() => {});
+    api.plans().then((d) => setPlans(d.plans || [])).catch(() => {});
     if (user) {
       api.subscriptionStatus().then(setSubStatus).catch(() => {});
       api.listResumes().then(setResumes).catch(() => {});
@@ -264,6 +267,33 @@ export default function LandingPage() {
                   </Link>
                 )}
               </div>
+              {plans.length > 0 ? (
+                plans.map((p) => (
+                  <div key={p.id} className={`plan-box elite ${isSubscribed && subStatus?.plan === p.slug ? "current" : ""}`}>
+                    {p.badge && <div className="plan-box-popular">✨ {p.badge.toUpperCase()}</div>}
+                    <div className="plan-box-name">{p.name}</div>
+                    <div className="plan-box-price"><span>₹</span>{p.price_inr.toLocaleString("en-IN")}</div>
+                    <div className="plan-box-period">
+                      per month · {p.interview_minutes} min
+                      {p.monthly_tokens ? ` · ${(p.monthly_tokens / 1_000_000).toLocaleString("en-IN")}M tokens` : ""}
+                    </div>
+                    <ul className="plan-box-features">
+                      {(p.features || []).map((f, i) => <li key={i}>✓ {f}</li>)}
+                    </ul>
+                    {isSubscribed && subStatus?.plan === p.slug ? (
+                      <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
+                    ) : (
+                      <button
+                        className="btn btn-primary"
+                        style={{ width: "100%", background: "linear-gradient(135deg, #d97706, #b45309)" }}
+                        onClick={handleSubscribeClick}
+                      >
+                        {user ? `Subscribe — ₹${p.price_inr.toLocaleString("en-IN")}/mo` : "Login to Subscribe"}
+                      </button>
+                    )}
+                  </div>
+                ))
+              ) : (
               <div className={`plan-box elite ${isSubscribed ? "current" : ""}`}>
                 <div className="plan-box-popular">✨ MOST POPULAR</div>
                 <div className="plan-box-name">Starter</div>
@@ -297,6 +327,7 @@ export default function LandingPage() {
                   </button>
                 )}
               </div>
+              )}
             </div>
           </section>
 

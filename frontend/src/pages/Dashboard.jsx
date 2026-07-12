@@ -80,6 +80,8 @@ export default function Dashboard() {
   const [siteStats, setSiteStats] = useState({ total_resumes: null, ats_pass_rate: null });
   const [plans, setPlans] = useState([]);
   const [profilePct, setProfilePct] = useState(0);
+  const [nudges, setNudges] = useState(null);
+  const [showRecharge, setShowRecharge] = useState(false);
   const fileRef = useRef();
 
   const load = () => {
@@ -87,6 +89,14 @@ export default function Dashboard() {
     api.subscriptionStatus().then(setSubStatus).catch(() => {});
     api.getProfile().then((p) => setProfilePct(p.profile_completion ?? 0)).catch(() => {});
     api.plans().then((d) => setPlans(d.plans || [])).catch(() => {});
+    api.subscriptionNudges().then((n) => {
+      setNudges(n);
+      // Recharge popup: once per session so it doesn't nag on every visit.
+      if (n.show_recharge && !sessionStorage.getItem("recharge_popup_shown")) {
+        sessionStorage.setItem("recharge_popup_shown", "1");
+        setShowRecharge(true);
+      }
+    }).catch(() => {});
   };
 
   useEffect(() => {
@@ -151,6 +161,8 @@ export default function Dashboard() {
   if (loading) return <DashboardSkeleton />;
 
   const isSubscribed = !!subStatus?.is_subscribed;
+  // Freepass (100%-off coupon) users never see purchase/upsell prompts.
+  const hidePurchase = !!subStatus?.used_freepass;
   const fromPrice = plans.length ? Math.min(...plans.map((p) => p.price_inr)) : 500;
   const statResumes = siteStats.total_resumes !== null ? siteStats.total_resumes.toLocaleString("en-IN") : "…";
   const statAts = siteStats.ats_pass_rate !== null ? `${siteStats.ats_pass_rate}%` : "…";
@@ -253,6 +265,32 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ── Loyalty win-back coupon ── */}
+      {nudges?.loyalty_coupon && !hidePurchase && (
+        <div style={{ maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+            padding: "14px 20px", marginBottom: 14, borderRadius: 14,
+            background: "linear-gradient(135deg, #fef3c7, #fde68a)", border: "1px solid #f59e0b",
+          }}>
+            <span style={{ fontSize: 26 }}>🎁</span>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontWeight: 800, color: "#92400e" }}>
+                Welcome back! Here's {nudges.loyalty_coupon.discount_value}% off — just for you
+              </div>
+              <div style={{ fontSize: 13, color: "#78350f" }}>
+                Use code <strong style={{ letterSpacing: 1 }}>{nudges.loyalty_coupon.code}</strong> at checkout
+                {nudges.loyalty_coupon.expires_at &&
+                  ` · valid till ${new Date(nudges.loyalty_coupon.expires_at).toLocaleDateString()}`}
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowSub(true)}>
+              Redeem now →
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Side-ad wrapper ── */}
       <div className="side-ad-wrapper" style={{ display: "flex", alignItems: "flex-start", maxWidth: 1380, margin: "0 auto", padding: "0 8px" }}>
 
@@ -332,10 +370,11 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* Plans */}
+          {/* Plans — hidden entirely for comped (freepass) users */}
+          {!hidePurchase && (
           <section className="section">
             <h2 className="section-title">Choose Your Plan</h2>
-            <p className="section-sub">Monthly plans with mock-interview minutes. Cancel anytime · top up with refills when you need more.</p>
+            <p className="section-sub">Monthly plans with mock-interview minutes &amp; AI usage. Cancel anytime · top up with refills when you need more.</p>
             <div className="plans-row" style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
               <div className="plan-box" style={{ flex: "1 1 220px", maxWidth: 300 }}>
                 <div className="plan-box-name">Free</div>
@@ -357,7 +396,10 @@ export default function Dashboard() {
                   {p.badge && <div className="plan-box-popular">{p.badge}</div>}
                   <div className="plan-box-name">{p.name}</div>
                   <div className="plan-box-price"><span>₹</span>{p.price_inr.toLocaleString("en-IN")}</div>
-                  <div className="plan-box-period">per month · {p.interview_minutes} min</div>
+                  <div className="plan-box-period">
+                    per month · {p.interview_minutes} min
+                    {p.monthly_tokens ? ` · ${(p.monthly_tokens / 1_000_000).toLocaleString("en-IN")}M tokens` : ""}
+                  </div>
                   <ul className="plan-box-features">
                     {(p.features || []).map((f, i) => <li key={i}>✓ {f}</li>)}
                   </ul>
@@ -371,6 +413,7 @@ export default function Dashboard() {
               ))}
             </div>
           </section>
+          )}
 
           {/* Elite features */}
           <section className="section">
@@ -460,6 +503,33 @@ export default function Dashboard() {
           onClose={() => setShowSub(false)}
           onSuccess={() => { setShowSub(false); load(); }}
         />
+      )}
+
+      {/* Recharge nudge — shown once per session when the plan lapsed or balance is low */}
+      {showRecharge && !showSub && !hidePurchase && (
+        <div className="modal-overlay" onClick={() => setShowRecharge(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>
+            <h3 style={{ marginTop: 0 }}>
+              {nudges?.recharge_reason === "balance_low"
+                ? "You're almost out of usage"
+                : "Recharge to unlock full access"}
+            </h3>
+            <p style={{ color: "var(--ink-soft)", fontSize: 14 }}>
+              {nudges?.recharge_reason === "balance_low"
+                ? "You've used over 90% of this month's interview minutes or AI usage. Top up or upgrade to keep going without interruption."
+                : "You don't have an active plan. Subscribe to get monthly mock-interview minutes, AI usage and premium career tools."}
+            </p>
+            <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }}
+              onClick={() => { setShowRecharge(false); setShowSub(true); }}>
+              View plans &amp; recharge
+            </button>
+            <button className="btn btn-ghost btn-sm" style={{ width: "100%", marginTop: 6 }}
+              onClick={() => setShowRecharge(false)}>
+              Not now
+            </button>
+          </div>
+        </div>
       )}
 
       <ProcessingOverlay visible={uploading} />

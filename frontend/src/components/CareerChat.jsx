@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../api/client.js";
 import Markdown from "./Markdown.jsx";
+import UsageMeter from "./UsageMeter.jsx";
 
 export default function CareerChat({ threadId, onThreadCreated, onConversationUpdate }) {
   const [messages, setMessages] = useState([]);
@@ -128,10 +129,16 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
       }
     } catch (e) {
       console.error("Failed to send chat message", e);
-      // Remove the optimistic user message and show error
+      // Out-of-tokens (402) gets its own message; other errors are generic.
+      const outOfTokens = /monthly AI usage|402/i.test(e.message || "");
       setMessages((prev) => [
         ...prev.filter((m) => m !== userMessage),
-        { role: "assistant", content: "Sorry, something went wrong. Please try again." },
+        {
+          role: "assistant",
+          content: outOfTokens
+            ? "⚠️ You've reached 100% of your monthly AI usage. Renew or upgrade your plan to keep chatting."
+            : "Sorry, something went wrong. Please try again.",
+        },
       ]);
       setInput(userMessage.content);
     } finally {
@@ -175,6 +182,8 @@ export default function CareerChat({ threadId, onThreadCreated, onConversationUp
 
   return (
     <div className="career-chat">
+      {/* Usage strip — chat consumption counts toward the monthly AI tokens */}
+      <UsageMeter compact showResumeQuota={false} style={{ margin: "8px 12px 0", borderRadius: 10 }} />
       {/* 1. SCROLL AREA - Handles scrollbars only */}
       <div className="chat-scroll-area">
         {/* 2. PADDING AREA - Handles flex layout & breathing room safely */}

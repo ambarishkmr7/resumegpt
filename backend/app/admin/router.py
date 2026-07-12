@@ -251,6 +251,8 @@ def list_payments(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, l
                   status: Optional[str] = Query(None), type: Optional[str] = Query(None),
                   user: User = Depends(require_admin), db: Session = Depends(get_db)):
     """Paginated payment history with user email."""
+    from app.subscription.router import expire_stale_payments
+    expire_stale_payments(db)  # keep abandoned-checkout rows from lingering as "created"
     q = db.query(Payment).order_by(Payment.created_at.desc())
     if status:
         q = q.filter(Payment.status == status)
@@ -265,6 +267,7 @@ def list_payments(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, l
         "plan": p.plan, "type": p.type, "amount": p.amount,
         "base_amount_inr": p.base_amount_inr, "discount_inr": p.discount_inr,
         "coupon_code": p.coupon_code, "currency": p.currency, "status": p.status,
+        "error_message": p.error_message,
         "razorpay_payment_id": p.razorpay_payment_id,
         "created_at": p.created_at.isoformat() if p.created_at else None,
     } for p in payments]

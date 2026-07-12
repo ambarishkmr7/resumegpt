@@ -21,6 +21,7 @@ function PlansSection() {
     const body = {
       name: f.name.value, description: f.description.value,
       price_inr: Number(f.price_inr.value), interview_minutes: Number(f.interview_minutes.value),
+      monthly_tokens: Math.round(Number(f.token_millions.value || 0) * 1_000_000),
       features: f.features.value.split("\n").map((x) => x.trim()).filter(Boolean),
       badge: f.badge.value || null, is_active: f.is_active.checked, is_default: f.is_default.checked,
       display_order: Number(f.display_order.value || 100),
@@ -37,13 +38,14 @@ function PlansSection() {
       </div>
       {msg && <div className="mi-note" style={{ margin: "6px 0" }}>{msg}</div>}
       <table className="admin-table">
-        <thead><tr><th>Name</th><th>Price</th><th>Minutes</th><th>Active</th><th>Default</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Price</th><th>Minutes</th><th>Tokens/mo</th><th>Active</th><th>Default</th><th></th></tr></thead>
         <tbody>
           {data.items.map((p) => (
             <tr key={p.id}>
               <td>{p.name} {p.badge && <span className="plan-popular" style={{ position: "static", transform: "none", fontSize: 10 }}>{p.badge}</span>}</td>
               <td>{inr(p.price_inr)}/mo</td>
               <td>{p.interview_minutes}</td>
+              <td>{p.monthly_tokens ? `${(p.monthly_tokens / 1_000_000).toLocaleString()}M` : "—"}</td>
               <td>{p.is_active ? "✓" : "—"}</td>
               <td>{p.is_default ? "★" : ""}</td>
               <td style={{ whiteSpace: "nowrap" }}>
@@ -65,6 +67,8 @@ function PlansSection() {
             <div style={{ display: "flex", gap: 8 }}>
               <label style={{ flex: 1 }}>Price (₹/mo)<input className="input" name="price_inr" type="number" defaultValue={editing.price_inr ?? 500} /></label>
               <label style={{ flex: 1 }}>Minutes/mo<input className="input" name="interview_minutes" type="number" defaultValue={editing.interview_minutes ?? 60} /></label>
+              <label style={{ flex: 1 }}>Tokens/mo (M)<input className="input" name="token_millions" type="number" step="0.1"
+                defaultValue={editing.monthly_tokens != null ? editing.monthly_tokens / 1_000_000 : 1} /></label>
             </div>
             <label>Features (one per line)<textarea className="input" name="features" rows={4} defaultValue={(editing.features || []).join("\n")} /></label>
             <div style={{ display: "flex", gap: 8 }}>
@@ -311,12 +315,26 @@ function UsageSection() {
   const load = useCallback(() => api.adminUsage({ page, q }).then(setData).catch(() => {}), [page, q]);
   useEffect(() => { load(); }, [load]);
 
-  const adjust = async (uid) => {
-    const v = prompt("Adjust minutes (use a negative number to deduct):", "30");
+  const adjust = async (u) => {
+    const isTokens = u.resource_type === "llm_tokens";
+    const v = prompt(
+      isTokens
+        ? "Adjust tokens (use a negative number to deduct):"
+        : "Adjust minutes (use a negative number to deduct):",
+      isTokens ? "100000" : "30",
+    );
     if (v == null) return;
-    try { const r = await api.adminAdjustUsage(uid, Number(v)); setMsg(`Updated — ${r.available_minutes} min available.`); load(); }
-    catch (e) { setMsg(e.message); }
+    try {
+      const body = isTokens ? { tokens: Number(v) } : { minutes: Number(v) };
+      const r = await api.adminAdjustUsage(u.user_id, body);
+      setMsg(isTokens
+        ? `Updated — ${(r.available_tokens ?? 0).toLocaleString()} tokens available.`
+        : `Updated — ${r.available_minutes} min available.`);
+      load();
+    } catch (e) { setMsg(e.message); }
   };
+
+  const fmt = (u, v) => (u.resource_type === "llm_tokens" ? (v ?? 0).toLocaleString() : mins(v));
 
   return (
     <div>
@@ -327,14 +345,17 @@ function UsageSection() {
       </div>
       {msg && <div className="mi-note">{msg}</div>}
       <table className="admin-table">
-        <thead><tr><th>User</th><th>Source</th><th>Allowance</th><th>Used</th><th>Refill</th><th>Available</th><th></th></tr></thead>
+        <thead><tr><th>User</th><th>Resource</th><th>Source</th><th>Allowance</th><th>Used</th><th>Refill</th><th>Available</th><th>% used</th><th></th></tr></thead>
         <tbody>
           {data.items.map((u) => (
-            <tr key={u.user_id}>
-              <td>{u.user_email}</td><td>{u.source}</td><td>{mins(u.allowance_seconds)}</td>
-              <td>{mins(u.used_seconds)}</td><td>{mins(u.refill_seconds)}</td>
-              <td><strong>{u.available_minutes} min</strong></td>
-              <td><button className="btn btn-ghost btn-sm" onClick={() => adjust(u.user_id)}>Adjust</button></td>
+            <tr key={`${u.user_id}-${u.resource_type}`}>
+              <td>{u.user_email}</td>
+              <td>{u.resource_type === "llm_tokens" ? "🤖 tokens" : "🎙 interview"}</td>
+              <td>{u.source}</td><td>{fmt(u, u.allowance_seconds)}</td>
+              <td>{fmt(u, u.used_seconds)}</td><td>{fmt(u, u.refill_seconds)}</td>
+              <td><strong>{u.resource_type === "llm_tokens" ? (u.available_seconds ?? 0).toLocaleString() : `${u.available_minutes} min`}</strong></td>
+              <td style={{ color: (u.percent_used ?? 0) >= 90 ? "#dc2626" : "inherit" }}>{u.percent_used ?? 0}%</td>
+              <td><button className="btn btn-ghost btn-sm" onClick={() => adjust(u)}>Adjust</button></td>
             </tr>
           ))}
         </tbody>
@@ -356,8 +377,10 @@ function SettingsSection() {
     try {
       const r = await api.adminSaveSettings({
         free_trial_interview_seconds: Number(f.trial.value) * 60,
+        free_trial_tokens: Number(f.trial_tokens.value || 0),
         usd_to_inr_rate: Number(f.rate.value),
         interview_hard_cap_seconds: Number(f.cap.value) * 60,
+        resume_uploads_per_day: Number(f.resume_daily.value || 0),
       });
       setS(r); setMsg("Saved.");
     } catch (err) { setMsg(err.message); }
@@ -369,8 +392,14 @@ function SettingsSection() {
       <label>Free trial minutes (0 = subscription-only)
         <input className="input" name="trial" type="number" defaultValue={Math.round((s.free_trial_interview_seconds || 0) / 60)} />
       </label>
+      <label>Free trial AI tokens (non-subscribers)
+        <input className="input" name="trial_tokens" type="number" defaultValue={s.free_trial_tokens ?? 100000} />
+      </label>
       <label>Per-session hard cap (minutes)
         <input className="input" name="cap" type="number" defaultValue={Math.round((s.interview_hard_cap_seconds || 3600) / 60)} />
+      </label>
+      <label>Resume uploads per day per user (0 = unlimited)
+        <input className="input" name="resume_daily" type="number" defaultValue={s.resume_uploads_per_day ?? 10} />
       </label>
       <label>USD → INR rate (for Profit & Loss)
         <input className="input" name="rate" type="number" step="0.01" defaultValue={s.usd_to_inr_rate || 84} />

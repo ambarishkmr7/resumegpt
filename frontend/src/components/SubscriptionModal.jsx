@@ -17,6 +17,7 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
   const [plans, setPlans] = useState([]);
   const [refills, setRefills] = useState([]);
   const [selected, setSelected] = useState(null); // { kind, id }
+  const [currentPlanSlug, setCurrentPlanSlug] = useState(null); // active subscription's plan
   const [coupon, setCoupon] = useState("");
   const [couponInfo, setCouponInfo] = useState(null); // { discount_inr, final_inr, code }
   const [couponErr, setCouponErr] = useState("");
@@ -25,15 +26,22 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([api.plans(), api.refillPacks()])
-      .then(([p, r]) => {
-        setPlans(p.plans || []);
-        setRefills(r.refill_packs || []);
-        const def = (p.plans || []).find((x) => x.is_default) || (p.plans || [])[0];
-        if (initialTab === "refills" && (r.refill_packs || []).length) {
-          setSelected({ kind: "refill", id: r.refill_packs[0].id });
-        } else if (def) {
-          setSelected({ kind: "plan", id: def.id });
+    Promise.all([api.plans(), api.refillPacks(), api.subscriptionStatus().catch(() => null)])
+      .then(([p, r, s]) => {
+        const planList = p.plans || [];
+        const refillList = r.refill_packs || [];
+        setPlans(planList);
+        setRefills(refillList);
+        const activeSlug = s?.is_subscribed ? s.plan : null;
+        setCurrentPlanSlug(activeSlug);
+        // Already subscribed → default to refills (that's the only sensible
+        // purchase mid-cycle); otherwise preselect the default plan.
+        if ((initialTab === "refills" || activeSlug) && refillList.length) {
+          setTab(activeSlug ? "refills" : initialTab);
+          setSelected({ kind: "refill", id: refillList[0].id });
+        } else {
+          const def = planList.find((x) => x.is_default) || planList[0];
+          if (def) setSelected({ kind: "plan", id: def.id });
         }
       })
       .catch((e) => setError(e.message))
@@ -42,6 +50,8 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
 
   const items = tab === "plans" ? plans : refills;
   const selItem = items.find((x) => selected && selected.kind === (tab === "plans" ? "plan" : "refill") && x.id === selected.id);
+  const isCurrentPlan = (it) => tab === "plans" && currentPlanSlug && it.slug === currentPlanSlug;
+  const selIsCurrent = selItem ? isCurrentPlan(selItem) : false;
 
   const pick = (id) => {
     setSelected({ kind: tab === "plans" ? "plan" : "refill", id });
@@ -54,7 +64,13 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
     setCouponInfo(null);
     setCouponErr("");
     const list = t === "plans" ? plans : refills;
-    if (list.length) setSelected({ kind: t === "plans" ? "plan" : "refill", id: list[0].id });
+    if (list.length) {
+      // Don't preselect the plan the user already has.
+      const first = t === "plans"
+        ? (list.find((x) => x.slug !== currentPlanSlug) || list[0])
+        : list[0];
+      setSelected({ kind: t === "plans" ? "plan" : "refill", id: first.id });
+    }
   };
 
   const applyCoupon = async () => {
@@ -139,7 +155,14 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal sub-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
         <img src="/logo.png" alt="resumesGPT" style={{ height: 44, margin: "0 auto 8px", display: "block" }} />
-        <h2 style={{ textAlign: "center", marginTop: 0 }}>Get more interview minutes</h2>
+        <h2 style={{ textAlign: "center", marginTop: 0 }}>
+          {currentPlanSlug ? "Manage your plan" : "Get more interview minutes"}
+        </h2>
+        {currentPlanSlug && (
+          <p style={{ textAlign: "center", fontSize: 13, color: "var(--ink-soft)", marginTop: -6 }}>
+            You already have an active plan — top up with a refill, or switch plans.
+          </p>
+        )}
 
         <div className="admin-tabs" style={{ justifyContent: "center", marginBottom: 14 }}>
           <button className={`rtab ${tab === "plans" ? "active" : ""}`} onClick={() => switchTab("plans")}>📅 Monthly Plans</button>
@@ -152,21 +175,27 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
           <div style={{ display: "grid", gap: 10 }}>
             {items.map((it) => {
               const isSel = selItem && selItem.id === it.id;
+              const isCurrent = isCurrentPlan(it);
               const minutes = tab === "plans" ? it.interview_minutes : it.total_minutes;
               return (
-                <button key={it.id} onClick={() => pick(it.id)}
+                <button key={it.id} onClick={() => !isCurrent && pick(it.id)}
                   className="elite-checkout-card"
                   style={{
-                    textAlign: "left", cursor: "pointer", padding: 14,
-                    border: isSel ? "2px solid #d97706" : "1px solid var(--line)",
-                    background: isSel ? "rgba(217,119,6,0.06)" : "transparent",
+                    textAlign: "left", cursor: isCurrent ? "default" : "pointer", padding: 14,
+                    border: isCurrent ? "2px solid #16a34a" : isSel ? "2px solid #d97706" : "1px solid var(--line)",
+                    background: isCurrent ? "rgba(22,163,74,0.06)" : isSel ? "rgba(217,119,6,0.06)" : "transparent",
+                    opacity: isCurrent ? 0.85 : 1,
                   }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
                       <strong>{it.name}</strong>
+                      {isCurrent && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: "#16a34a", background: "#dcfce7", padding: "2px 8px", borderRadius: 999 }}>✓ Current plan</span>}
                       {it.badge && <span className="plan-popular" style={{ position: "static", transform: "none", marginLeft: 8, fontSize: 11 }}>{it.badge}</span>}
                       <div style={{ color: "var(--ink-soft)", fontSize: 13 }}>
                         {minutes} interview minutes{tab === "plans" ? " / month" : ""}
+                        {tab === "plans" && it.monthly_tokens
+                          ? ` · ${(it.monthly_tokens / 1_000_000).toLocaleString()}M AI tokens`
+                          : ""}
                         {tab === "refills" && it.bonus_minutes ? ` (+${it.bonus_minutes} bonus)` : ""}
                       </div>
                     </div>
@@ -204,8 +233,10 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
 
         <button className="btn btn-primary"
           style={{ width: "100%", padding: 14, fontSize: 16, marginTop: 16, background: "linear-gradient(135deg, #d97706, #b45309)" }}
-          onClick={purchase} disabled={processing || !selItem}>
-          {processing ? "Processing…" : selItem
+          onClick={purchase} disabled={processing || !selItem || selIsCurrent}>
+          {processing ? "Processing…" : selIsCurrent
+            ? "✓ This is your current plan"
+            : selItem
             ? `Pay ₹${finalPrice}${couponInfo ? ` (was ₹${basePrice})` : ""} — ${tab === "plans" ? "Subscribe" : "Buy refill"}`
             : "Select an option"}
         </button>

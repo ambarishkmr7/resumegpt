@@ -2,7 +2,6 @@
 and grandfather existing lifetime-Elite subscribers. Idempotent — safe to run
 on every startup (called from app/main.py lifespan)."""
 import logging
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -11,18 +10,25 @@ from app.subscription.usage import SETTING_DEFAULTS
 
 logger = logging.getLogger(__name__)
 
-# slug, name, price_inr, minutes, features, badge, default, order
+# Rupee → token conversion used when a plan has no explicit token allowance
+# (₹500 plan ⇒ 1M tokens / month).
+TOKENS_PER_RUPEE = 2000
+
+# slug, name, price_inr, minutes, monthly_tokens, features, badge, default, order
 DEFAULT_PLANS = [
-    ("starter", "Starter", 500, 60,
-     ["60 mock-interview minutes / month", "AI scoring & gap analysis",
+    ("starter", "Starter", 500, 60, 1_000_000,
+     ["60 mock-interview minutes / month", "1M AI tokens / month",
+      "AI scoring & gap analysis",
       "All resume templates & downloads", "Career roadmap & job agent"],
      None, True, 10),
-    ("pro", "Pro", 999, 150,
-     ["150 mock-interview minutes / month", "Everything in Starter",
+    ("pro", "Pro", 999, 150, 2_000_000,
+     ["150 mock-interview minutes / month", "2M AI tokens / month",
+      "Everything in Starter",
       "Priority AI responses", "Interview learning materials"],
      "Popular", False, 20),
-    ("elite", "Elite", 1999, 400,
-     ["400 mock-interview minutes / month", "Everything in Pro",
+    ("elite", "Elite", 1999, 400, 4_000_000,
+     ["400 mock-interview minutes / month", "4M AI tokens / month",
+      "Everything in Pro",
       "Highest priority support", "Early access to new features"],
      "Best value", False, 30),
 ]
@@ -42,26 +48,33 @@ def seed_billing(db: Session) -> None:
             db.add(AppSetting(key=key, value={"v": val}))
 
     # ── Plans ──
-    for slug, name, price, minutes, features, badge, is_default, order in DEFAULT_PLANS:
+    for slug, name, price, minutes, tokens, features, badge, is_default, order in DEFAULT_PLANS:
         if not db.query(Plan).filter(Plan.slug == slug).first():
             db.add(Plan(
                 slug=slug, name=name, price_inr=price, interview_minutes=minutes,
-                allowances={"interview_seconds": minutes * 60}, features=features,
+                allowances={"interview_seconds": minutes * 60, "llm_tokens": tokens},
+                features=features,
                 badge=badge, is_active=True, is_default=is_default, display_order=order,
                 description=f"{minutes} interview minutes every month.",
             ))
 
-    # ── Grandfather: legacy lifetime-Elite plan (hidden from purchase) ──
+    # ── Backfill: existing plans created before token metering get an allowance ──
+    for plan in db.query(Plan).all():
+        allowances = dict(plan.allowances or {})
+        if "llm_tokens" not in allowances:
+            allowances["llm_tokens"] = int((plan.price_inr or 0) * TOKENS_PER_RUPEE)
+            plan.allowances = allowances
+
+    # ── Retire the legacy lifetime-Elite plan (no longer offered) ──
     legacy = db.query(Plan).filter(Plan.slug == "legacy-elite").first()
-    if not legacy:
-        legacy = Plan(
-            slug="legacy-elite", name="Elite (Legacy)", price_inr=1999,
-            interview_minutes=6000, allowances={"interview_seconds": 6000 * 60},
-            features=["Grandfathered lifetime Elite access"], is_active=False,
-            is_default=False, display_order=999, description="Legacy lifetime Elite.",
-        )
-        db.add(legacy)
-        db.flush()
+    if legacy:
+        in_use = db.query(Subscription).filter(Subscription.plan_id == legacy.id).first()
+        if in_use:
+            # Referenced by old subscriptions → keep the row but hidden/inactive.
+            legacy.is_active = False
+        else:
+            db.delete(legacy)
+        logger.info("Legacy Elite plan retired (%s)", "deactivated" if in_use else "deleted")
 
     # ── Refill packs ──
     for slug, name, price, minutes, bonus, order in DEFAULT_REFILLS:
@@ -91,21 +104,3 @@ def seed_billing(db: Session) -> None:
         ))
 
     db.commit()
-
-    # ── Backfill existing lifetime-Elite subscribers onto the legacy plan ──
-    legacy = db.query(Plan).filter(Plan.slug == "legacy-elite").first()
-    if legacy:
-        rows = (
-            db.query(Subscription)
-            .filter(Subscription.status == "active", Subscription.plan_id.is_(None))
-            .all()
-        )
-        for sub in rows:
-            sub.plan_id = legacy.id
-            if not sub.current_period_end:
-                # Give them a long runway so the migration never cuts them off.
-                sub.current_period_start = sub.created_at or datetime.utcnow()
-                sub.current_period_end = datetime(2099, 1, 1)
-        if rows:
-            db.commit()
-            logger.info("Grandfathered %d existing subscriber(s) onto legacy-elite", len(rows))

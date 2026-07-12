@@ -137,9 +137,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Billing seed skipped: %s", e)
 
+    # ── APScheduler: payment-expiry jobs ──
+    # Abandoned Razorpay checkouts leave Payment rows stuck in "created".
+    # Each new order also gets a precise one-shot job (+30 min); this periodic
+    # sweep is the safety net for one-shot jobs lost to a restart. Neither
+    # depends on any HTTP request arriving. (Also swept lazily on the
+    # payment-history endpoints for serverless deploys with no live process.)
+    try:
+        from app.core.scheduler import start_scheduler, scheduler
+        from app.subscription.router import expire_stale_payments
+        start_scheduler()
+        scheduler.add_job(
+            expire_stale_payments, "interval", minutes=5,
+            id="expire_stale_payments_sweep", replace_existing=True,
+            misfire_grace_time=300,
+        )
+        # Catch anything that went stale while the server was down.
+        expire_stale_payments()
+    except Exception as e:
+        logger.warning("Payment-expiry scheduler not started: %s", e)
+
     logger.info("Startup complete — all routers mounted")
     yield
     # Shutdown
+    try:
+        from app.core.scheduler import shutdown_scheduler
+        shutdown_scheduler()
+    except Exception:
+        pass
     logger.info("resumes-gpt API shutting down")
 
 

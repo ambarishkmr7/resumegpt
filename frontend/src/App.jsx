@@ -20,6 +20,7 @@ import AuthorLogin from "./pages/AuthorLogin.jsx";
 import AuthorDashboard from "./pages/AuthorDashboard.jsx";
 import SysAdmin from "./pages/SysAdmin.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
+import SettingsPage from "./pages/SettingsPage.jsx";
 import CareerPage from "./pages/CareerPage.jsx";
 import JobsPage from "./pages/JobsPage.jsx";
 import { SkeletonStyles } from "./components/Skeleton.jsx";
@@ -88,6 +89,7 @@ export default function App() {
       <Route path="/editor/:id/interview" element={<Protected><MockInterview /></Protected>} />
       <Route path="/admin" element={<AdminProtected><AdminPage /></AdminProtected>} />
       <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
+      <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
       <Route path="/career" element={<Protected><CareerPage /></Protected>} />
       <Route path="/jobs" element={<Protected><JobsPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />

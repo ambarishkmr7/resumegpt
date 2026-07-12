@@ -19,6 +19,7 @@ from app.models import InterviewSession, Resume, User
 from app.resumes import ats as ats_engine
 from app.resumes import generator
 from app.resumes import parser
+from app.subscription import usage as usage_svc
 from app.storage import StorageService
 from app.schemas import (
     ATSRequest, ATSResult, CoverLetterRequest, CoverLetterResponse,
@@ -85,10 +86,17 @@ def create_resume(payload: ResumeCreate, user: User = Depends(get_current_user),
             status_code=409,
             detail=f"You can keep up to {MAX_RESUMES} resumes. Delete one to create a new resume.",
         )
+    # Daily cap (admin-configurable, default 10/day) — counted via the usage
+    # ledger so deleting resumes doesn't reset the count.
+    try:
+        usage_svc.check_resume_upload_allowed(db, user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     r = Resume(user_id=user.id, title=payload.title, template_id=payload.template_id,
                content=payload.content.model_dump())
     r.ats_score = ats_engine.score_resume(payload.content).score
     db.add(r); db.commit(); db.refresh(r)
+    usage_svc.log_resume_upload(db, user.id, ref_id=r.id)
     logger.info("Resume created: %s (user=%s, ats=%s)", r.title, user.id, r.ats_score)
     return r
 
@@ -188,6 +196,10 @@ async def upload_resume(
             status_code=409,
             detail=f"You can keep up to {MAX_RESUMES} resumes. Delete one to import a new resume.",
         )
+    try:
+        usage_svc.check_resume_upload_allowed(db, user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     data = await file.read()
     if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"File exceeds {settings.MAX_UPLOAD_MB}MB")
@@ -238,6 +250,7 @@ async def upload_resume(
                content=content.model_dump(), original_filename=file.filename)
     r.ats_score = ats_engine.score_resume(content).score
     db.add(r); db.commit(); db.refresh(r)
+    usage_svc.log_resume_upload(db, user.id, ref_id=r.id)
 
     # 4) Move the file from temp key to final key.
     try:

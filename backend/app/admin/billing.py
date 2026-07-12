@@ -55,7 +55,9 @@ def _plan_dict(p: Plan) -> dict:
     return {
         "id": p.id, "slug": p.slug, "name": p.name, "description": p.description,
         "price_inr": p.price_inr, "currency": p.currency, "billing_interval": p.billing_interval,
-        "interview_minutes": p.interview_minutes, "allowances": p.allowances or {},
+        "interview_minutes": p.interview_minutes,
+        "monthly_tokens": int((p.allowances or {}).get("llm_tokens", 0) or 0),
+        "allowances": p.allowances or {},
         "features": p.features or [], "badge": p.badge, "is_active": p.is_active,
         "is_default": p.is_default, "display_order": p.display_order,
         "razorpay_plan_id": p.razorpay_plan_id,
@@ -94,6 +96,7 @@ class PlanIn(BaseModel):
     description: Optional[str] = None
     price_inr: int = 500
     interview_minutes: int = 60
+    monthly_tokens: int = 1_000_000     # LLM-token allowance per month
     features: List[str] = []
     badge: Optional[str] = None
     is_active: bool = True
@@ -119,7 +122,8 @@ def admin_create_plan(body: PlanIn, _: User = Depends(require_admin), db: Sessio
     plan = Plan(
         slug=slug, name=body.name, description=body.description, price_inr=body.price_inr,
         interview_minutes=body.interview_minutes,
-        allowances={"interview_seconds": body.interview_minutes * 60},
+        allowances={"interview_seconds": body.interview_minutes * 60,
+                    "llm_tokens": body.monthly_tokens},
         features=body.features, badge=body.badge, is_active=body.is_active,
         is_default=body.is_default, display_order=body.display_order,
     )
@@ -142,7 +146,8 @@ def admin_update_plan(plan_id: str, body: PlanIn, _: User = Depends(require_admi
     plan.description = body.description
     plan.price_inr = body.price_inr
     plan.interview_minutes = body.interview_minutes
-    plan.allowances = {"interview_seconds": body.interview_minutes * 60}
+    plan.allowances = {"interview_seconds": body.interview_minutes * 60,
+                       "llm_tokens": body.monthly_tokens}
     plan.features = body.features
     plan.badge = body.badge
     plan.is_active = body.is_active
@@ -424,19 +429,30 @@ def admin_list_usage(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1
             "allowance_seconds": a.allowance_seconds, "used_seconds": a.used_seconds,
             "refill_seconds": a.refill_seconds, "available_seconds": avail,
             "available_minutes": avail // 60,
+            "percent_used": usage_svc.percent_used(a),
             "cycle_end": a.cycle_end.isoformat() if a.cycle_end else None,
         })
     return _page(out, total, page, page_size)
 
 
 class UsageAdjustIn(BaseModel):
-    minutes: int   # positive to grant, negative to deduct
+    minutes: Optional[int] = None   # interview minutes: positive grant, negative deduct
+    tokens: Optional[int] = None    # LLM tokens: positive grant, negative deduct
 
 
 @router.post("/usage/{user_id}/adjust")
 def admin_adjust_usage(user_id: str, body: UsageAdjustIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     if not db.query(User.id).filter(User.id == user_id).first():
         raise HTTPException(status_code=404, detail="User not found")
+    if body.minutes is None and body.tokens is None:
+        raise HTTPException(status_code=400, detail="Provide minutes or tokens to adjust")
+    if body.tokens is not None:
+        account = usage_svc.admin_adjust(db, user_id, body.tokens, ref_id=f"admin:{admin.id}",
+                                         resource=usage_svc.RESOURCE_TOKENS)
+        avail = usage_svc.available_seconds(account)
+        logger.info("Admin %s adjusted tokens for %s by %s -> %s", admin.id, user_id, body.tokens, avail)
+        return {"user_id": user_id, "resource_type": usage_svc.RESOURCE_TOKENS,
+                "available_tokens": avail}
     account = usage_svc.admin_adjust(db, user_id, body.minutes * 60, ref_id=f"admin:{admin.id}")
     avail = usage_svc.available_seconds(account)
     logger.info("Admin %s adjusted usage for %s by %s min -> %ss", admin.id, user_id, body.minutes, avail)
@@ -468,8 +484,10 @@ def admin_list_users(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1
 
 class SettingsIn(BaseModel):
     free_trial_interview_seconds: Optional[int] = None
+    free_trial_tokens: Optional[int] = None
     usd_to_inr_rate: Optional[float] = None
     interview_hard_cap_seconds: Optional[int] = None
+    resume_uploads_per_day: Optional[int] = None
 
 
 @router.get("/settings")
