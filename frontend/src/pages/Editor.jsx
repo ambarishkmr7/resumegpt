@@ -253,7 +253,7 @@ export default function Editor() {
   if (!content) return <EditorSkeleton />;
 
   const activeTpl = templates.find((t) => t.id === templateId) || null;
-  const isEliteUnlocked = !!(subStatus?.is_subscribed && subStatus?.payment_id);
+  const isEliteUnlocked = !!subStatus?.is_subscribed;
 
   const openEliteTab = () => {
     const isGuest = user?.email?.endsWith("@guest.resumesgpt.in");
