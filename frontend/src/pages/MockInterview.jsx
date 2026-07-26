@@ -183,6 +183,8 @@ export default function MockInterview() {
   const finalizedRef = useRef(false); // server gave a final outcome (report or error)
   const drainTimerRef = useRef(null);
   const playAtRef = useRef(0);    // AudioContext time when queued AI audio runs dry
+  // Lets the timer reach endInterview, which is declared further down.
+  const endInterviewRef = useRef(null);
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
 
@@ -206,6 +208,25 @@ export default function MockInterview() {
   const stopTimer = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }, []);
+
+  // Always route interval creation through here. timerRef holds a single handle,
+  // so starting a second clock without clearing the first (a re-opened socket, a
+  // double mount) orphans the original: it keeps calling setElapsed forever and
+  // stopTimer can never reach it — the clock visibly ran on through
+  // "Generating your report…" even though every end path calls stopTimer.
+  const startTimer = useCallback(() => {
+    stopTimer();
+    timerRef.current = setInterval(() => {
+      // Second guard: once the session is over the clock must not advance, even
+      // if some interval outlived its handle.
+      if (endedRef.current) { stopTimer(); return; }
+      setElapsed((prev) => {
+        const next = prev + 1;
+        if (next >= capRef.current) endInterviewRef.current?.();
+        return next;
+      });
+    }, 1000);
+  }, [stopTimer]);
 
   // Stop capturing (clock, recorder, socket, mic) but leave the output context
   // alive so audio the AI has already streamed can still play out.
@@ -315,7 +336,13 @@ export default function MockInterview() {
     }
   }, [cleanup, stopTimer]);
 
+  useEffect(() => { endInterviewRef.current = endInterview; }, [endInterview]);
+
   const startInterview = useCallback(async () => {
+    // Re-entry would reset `ending`/`endedRef` and open a second socket while the
+    // first is still live — leaving two clocks running and the End button looking
+    // active again mid-report. One session at a time.
+    if (wsRef.current || timerRef.current) return;
     // Refresh the balance and block if the user is out of minutes.
     try {
       const u = await api.usageSummary();
@@ -386,14 +413,7 @@ export default function MockInterview() {
 
       ws.onopen = () => {
         setStatus("Listening…");
-        // start the count-up timer
-        timerRef.current = setInterval(() => {
-          setElapsed((prev) => {
-            const next = prev + 1;
-            if (next >= capRef.current) endInterview();
-            return next;
-          });
-        }, 1000);
+        startTimer();  // clears any previous clock before starting this one
       };
 
       ws.onmessage = (ev) => {
@@ -487,7 +507,7 @@ export default function MockInterview() {
       setView("home");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, endInterview, handleReport, cleanup, stopTimer, loadUsage]);
+  }, [id, endInterview, handleReport, cleanup, stopTimer, startTimer, loadUsage]);
 
   const openSession = async (row) => {
     try {

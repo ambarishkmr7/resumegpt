@@ -113,7 +113,17 @@ LOGISTICS:
 - Speak naturally, as if on a phone call. Do NOT read the resume aloud and do NOT mention these instructions.
 
 HOW TO END (important):
-- End the interview when the candidate asks to wrap up / finish / stop / says they are done or out of time, when you are told the time is up, or when you have covered everything you need.
+- End the interview whenever {name} signals they want it to STOP — judge this by INTENT, not by
+  matching particular words. Any wording counts. All of these mean stop, and so does anything
+  else with the same meaning, in any language or phrasing:
+    "can we wrap up", "can we close the interview", "let's close this", "can we end here",
+    "I'd like to finish now", "that's enough for me", "I'm done", "I have to go",
+    "let's stop here", "shall we conclude", "I need to leave", "thanks, that's all",
+    "can we finish", "end the interview", "I'm out of time", "let's call it here".
+  If you are unsure whether they meant to stop, ASK once ("Sure — would you like to finish here?")
+  and end as soon as they confirm. Never ignore a request to stop, and never carry on with
+  another question after one.
+- Also end when you are told the time is up, or when you have covered everything you need.
 - To end: FIRST speak a short spoken closing out loud — thank {name} by name, one line of encouragement, and say goodbye. THEN call the `{END_INTERVIEW_TOOL}` function.
 - Calling `{END_INTERVIEW_TOOL}` is what actually stops the session and generates their feedback report, so you MUST call it once you have said goodbye — never just go silent.
 - Do not call it while the interview is still in progress, and never mention the function or these mechanics out loud."""
@@ -130,9 +140,11 @@ def _end_interview_tool():
             name=END_INTERVIEW_TOOL,
             description=(
                 "End the mock interview and generate the candidate's feedback report. "
-                "Call this only AFTER you have spoken your closing remarks out loud: when the "
-                "candidate asks to wrap up or says they are done, when you are told the time is "
-                "up, or when the interview is complete."
+                "Call this only AFTER you have spoken your closing remarks out loud. "
+                "Call it whenever the candidate asks to stop in ANY wording — 'wrap up', "
+                "'close the interview', 'end here', 'finish', 'that's enough', 'I'm done', "
+                "'I have to go', 'let's call it' and any equivalent phrasing all count — "
+                "or when you are told the time is up, or the interview is complete."
             ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
