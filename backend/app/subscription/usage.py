@@ -21,6 +21,7 @@ from datetime import datetime
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -124,12 +125,16 @@ def _trial_amount(db: Session, resource: str) -> int:
     return int(get_setting(db, key) or 0)
 
 
-def get_or_create_account(db: Session, user_id: str, resource: str = RESOURCE_INTERVIEW) -> UsageAccount:
-    account = (
+def _find_account(db: Session, user_id: str, resource: str) -> UsageAccount | None:
+    return (
         db.query(UsageAccount)
         .filter(UsageAccount.user_id == user_id, UsageAccount.resource_type == resource)
         .first()
     )
+
+
+def get_or_create_account(db: Session, user_id: str, resource: str = RESOURCE_INTERVIEW) -> UsageAccount:
+    account = _find_account(db, user_id, resource)
     if account is None:
         trial = _trial_amount(db, resource)
         account = UsageAccount(
@@ -138,11 +143,23 @@ def get_or_create_account(db: Session, user_id: str, resource: str = RESOURCE_IN
             source="trial", cycle_start=datetime.utcnow(), cycle_end=None,
         )
         db.add(account)
-        db.flush()
-        if trial:
-            _log(db, account, trial, "trial_grant", None)
-        db.commit()
-        db.refresh(account)
+        try:
+            db.flush()
+            if trial:
+                _log(db, account, trial, "trial_grant", None)
+            db.commit()
+            db.refresh(account)
+        except IntegrityError:
+            # A concurrent request created this account first (the frontend
+            # fires /status, /usage and /nudges in parallel on page load, and
+            # React StrictMode doubles each in dev). The unique index on
+            # (user_id, resource_type) is doing its job — adopt the row the
+            # other request committed instead of 500-ing.
+            db.rollback()
+            account = _find_account(db, user_id, resource)
+            if account is None:
+                raise
+            _reconcile(db, account)
     else:
         _reconcile(db, account)
     return account
@@ -387,7 +404,15 @@ def grant_subscription_cycle(db: Session, user_id: str, ref_id: str | None = Non
     account = None
     sub = _active_subscription(db, user_id)
     for res in resources:
-        account = get_or_create_account(db, user_id, res)
+        # Look the account up *without* reconciling. get_or_create_account()
+        # reconciles, and on a brand-new subscription that reconcile applies the
+        # very cycle we are about to apply — writing two identical
+        # `subscription_grant` rows per resource into the ledger. The balance was
+        # right either way (the cycle is assigned, not added), but the audit
+        # trail double-counted every activation.
+        account = _find_account(db, user_id, res)
+        if account is None:
+            account = get_or_create_account(db, user_id, res)
         if sub:
             _apply_subscription_cycle(db, account, sub, reset_used=True)
             account.updated_at = datetime.utcnow()

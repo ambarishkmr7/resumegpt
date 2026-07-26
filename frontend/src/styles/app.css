@@ -1382,6 +1382,7 @@ input:focus, textarea:focus, select:focus {
 .mi-timer { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
 .mi-timer-max { font-size: 15px; font-weight: 500; color: var(--ink-soft); }
 .mi-controls { display: flex; gap: 12px; margin-top: 8px; }
+.mi-controls .btn:disabled { opacity: .55; }
 .mi-end { padding: 11px 26px; }
 
 .mi-card { background: var(--paper-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }

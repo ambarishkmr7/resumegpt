@@ -14,7 +14,9 @@ Handles: payment.captured / order.paid (one-time orders → fulfil), subscriptio
 import hashlib
 import hmac
 import logging
+from datetime import datetime
 
+from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Request, Response
 from sqlalchemy.orm import Session
 
@@ -114,21 +116,39 @@ def _handle_event(db: Session, event_type: str, payload: dict) -> None:
             cancel_payment_expiry(payment.id)
             logger.info("Webhook activated subscription %s (user=%s)", rzp_sub_id, payment.user_id)
         elif sub:
-            # Renewal charge → grant a fresh monthly cycle.
+            # Renewal charge → roll the billing period forward, then grant a
+            # fresh cycle. Advancing the period is what keeps the plan readable
+            # as active: _status_payload treats a past current_period_end as
+            # expired, so a charged-but-not-advanced subscription would lock the
+            # customer out of what they just paid for.
+            now = datetime.utcnow()
+            start = sub.current_period_end if (sub.current_period_end and sub.current_period_end > now) else now
+            sub.current_period_start = start
+            sub.current_period_end = start + relativedelta(months=1)
             sub.status = "active"
             db.flush()
             usage_svc.grant_subscription_cycle(db, sub.user_id)
             db.commit()
-            logger.info("Webhook renewed subscription %s (user=%s)", rzp_sub_id, sub.user_id)
+            logger.info("Webhook renewed subscription %s (user=%s) — period now ends %s",
+                        rzp_sub_id, sub.user_id, sub.current_period_end)
 
     elif event_type in ("subscription.cancelled", "subscription.halted", "subscription.completed"):
         sub_entity = entity.get("subscription", {}).get("entity", {})
         rzp_sub_id = sub_entity.get("id")
         sub = db.query(Subscription).filter(Subscription.razorpay_subscription_id == rzp_sub_id).first()
         if sub:
-            sub.status = "cancelled" if "cancel" in event_type else "halted"
+            # Turning auto-pay off cancels the mandate at cycle end. Access the
+            # user already paid for must survive that: only close the plan once
+            # the paid period is actually over.
+            still_paid_for = bool(sub.current_period_end and sub.current_period_end > datetime.utcnow())
+            if still_paid_for:
+                sub.cancel_at_period_end = True
+                logger.info("Webhook: mandate %s ended; plan stays active until %s",
+                            rzp_sub_id, sub.current_period_end)
+            else:
+                sub.status = "cancelled" if "cancel" in event_type else "halted"
+                logger.info("Webhook marked subscription %s as %s", rzp_sub_id, sub.status)
             db.commit()
-            logger.info("Webhook marked subscription %s as %s", rzp_sub_id, sub.status)
 
     elif event_type in ("refund.processed", "refund.created"):
         refund = entity.get("refund", {}).get("entity", {})

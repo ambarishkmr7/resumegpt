@@ -63,11 +63,15 @@ export function useLiveInterview(resumeId: string) {
     mutedRef.current = muted;
   }, [muted]);
 
-  const cleanup = useCallback(() => {
+  const stopTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+  }, []);
+
+  const cleanup = useCallback(() => {
+    stopTimer();
     if (speakingTimerRef.current) {
       clearTimeout(speakingTimerRef.current);
       speakingTimerRef.current = null;
@@ -79,7 +83,7 @@ export function useLiveInterview(resumeId: string) {
     if (engine) void engine.stop();
     micChunksRef.current = [];
     micLenRef.current = 0;
-  }, []);
+  }, [stopTimer]);
 
   useEffect(() => () => cleanup(), [cleanup]);
 
@@ -117,7 +121,11 @@ export function useLiveInterview(resumeId: string) {
   );
 
   const end = useCallback(() => {
+    if (endedRef.current) return; // already ending — don't send a second "end"
     endedRef.current = true;
+    // The session is over the moment End is tapped: freeze the clock instead of
+    // letting it tick through report generation.
+    stopTimer();
     setStatusLine("Generating your report…");
     setPhase("ending");
     flushMic();
@@ -128,7 +136,7 @@ export function useLiveInterview(resumeId: string) {
       cleanup();
       setPhase("idle");
     }
-  }, [cleanup, flushMic]);
+  }, [cleanup, flushMic, stopTimer]);
 
   const endRef = useRef(end);
   endRef.current = end;
@@ -154,8 +162,18 @@ export function useLiveInterview(resumeId: string) {
           setStatusLine("Listening…");
         } else if (msg.state === "reconnecting") {
           setStatusLine("Reconnecting…");
-        } else if (msg.state === "time_up") {
-          setStatusLine("Time's up — wrapping up…");
+        } else if (msg.state === "time_up" || msg.state === "wrapping_up") {
+          // The server is closing the session (time budget spent, or the
+          // interviewer wrapped up on its own). Stop the clock and treat the
+          // upcoming socket close as expected, not as a dropped connection.
+          endedRef.current = true;
+          stopTimer();
+          setPhase("ending");
+          setStatusLine(
+            msg.state === "time_up"
+              ? "Time's up — generating your report…"
+              : "Wrapping up — generating your report…",
+          );
         }
       } else if (msg.type === "report") {
         handleReport(msg.data);
@@ -169,7 +187,7 @@ export function useLiveInterview(resumeId: string) {
         }
       }
     },
-    [cleanup, failToIdle, handleReport],
+    [cleanup, failToIdle, handleReport, stopTimer],
   );
 
   const start = useCallback(async () => {

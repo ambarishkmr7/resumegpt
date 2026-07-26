@@ -23,6 +23,7 @@ import ProfilePage from "./pages/ProfilePage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
 import CareerPage from "./pages/CareerPage.jsx";
 import JobsPage from "./pages/JobsPage.jsx";
+import PaymentSuccess from "./pages/PaymentSuccess.jsx";
 import { SkeletonStyles } from "./components/Skeleton.jsx";
 
 function AuthSkeleton() {
@@ -54,6 +55,15 @@ function Protected({ children }) {
   if (!user) return <Navigate to="/login" replace />;
   // Admins always land on /admin, not the user dashboard
   if (user.is_admin) return <Navigate to="/admin" replace />;
+  return children;
+}
+
+// Logged-in only, with no admin redirect — a receipt belongs to whoever paid,
+// including an admin account.
+function RequireAuth({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <AuthSkeleton />;
+  if (!user) return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -92,6 +102,7 @@ export default function App() {
       <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
       <Route path="/career" element={<Protected><CareerPage /></Protected>} />
       <Route path="/jobs" element={<Protected><JobsPage /></Protected>} />
+      <Route path="/payment/success/:ref" element={<RequireAuth><PaymentSuccess /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

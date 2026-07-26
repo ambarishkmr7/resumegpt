@@ -86,6 +86,108 @@ def _compute_completion(data: dict[str, Any]) -> int:
     return min(score, 100)
 
 
+# ── Resume → profile prefill ──────────────────────────────────────────────────
+
+def _map_resume_education(items: list) -> list[dict[str, Any]]:
+    return [{
+        "degree": e.get("degree") or "",
+        "school": e.get("school") or "",
+        "location": e.get("location") or "",
+        "start_year": e.get("start") or "",
+        "end_year": e.get("end") or "",
+        "grade": e.get("details") or "",
+    } for e in items if isinstance(e, dict)]
+
+
+def _map_resume_experience(items: list) -> list[dict[str, Any]]:
+    out = []
+    for e in items:
+        if not isinstance(e, dict):
+            continue
+        end = e.get("end") or ""
+        is_present = not end or end.strip().lower() == "present"
+        out.append({
+            "title": e.get("title") or "",
+            "company": e.get("company") or "",
+            "location": e.get("location") or "",
+            "start_date": e.get("start") or "",
+            "end_date": "" if is_present else end,
+            "current": is_present,
+            "description": "\n".join(e.get("bullets") or []),
+        })
+    return out
+
+
+def _merge_latest_resume(db: Session, user_id: str, data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Fill empty profile fields from the user's most recent resume.
+
+    The profile always wins where it has a value; the resume only fills blanks.
+    This runs server-side so every caller sees the same profile *and the same
+    completion score* — when this merge lived only in the profile screen, the
+    dashboard reported the saved-but-empty profile (3%) while the profile page
+    showed the resume-filled form (85%) for the very same account.
+
+    Returns (merged_data, prefilled) — `prefilled` drives the "review and save"
+    banner, since none of this is persisted until the user saves.
+    """
+    from app.models import Resume
+
+    resume = (
+        db.query(Resume)
+        .filter(Resume.user_id == user_id)
+        .order_by(Resume.updated_at.desc().nullslast())
+        .first()
+    )
+    content = (resume.content or {}) if resume else {}
+    if not content:
+        return data, False
+
+    contact = content.get("contact") or {}
+    merged = {k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v)
+              for k, v in data.items()}
+    prefilled = False
+
+    personal = dict(merged.get("personal") or {})
+    for profile_field, resume_value in (
+        ("full_name", contact.get("name")),
+        ("phone", contact.get("phone")),
+        ("location", contact.get("location")),
+        ("linkedin_url", contact.get("linkedin")),
+        ("headline", contact.get("title")),
+        ("summary", content.get("summary")),
+    ):
+        if not str(personal.get(profile_field) or "").strip() and str(resume_value or "").strip():
+            personal[profile_field] = resume_value
+            prefilled = True
+    merged["personal"] = personal
+
+    if not (merged.get("education") or []):
+        edu = _map_resume_education(content.get("education") or [])
+        if edu:
+            merged["education"] = edu
+            prefilled = True
+
+    if not (merged.get("experience") or []):
+        exp = _map_resume_experience(content.get("experience") or [])
+        if exp:
+            merged["experience"] = exp
+            prefilled = True
+
+    if not (merged.get("skills") or []):
+        skills = [str(s) for s in (content.get("skills") or []) if str(s).strip()]
+        if skills:
+            merged["skills"] = skills
+            prefilled = True
+
+    prefs = dict(merged.get("preferences") or {})
+    if not str(prefs.get("desired_role") or "").strip() and str(contact.get("title") or "").strip():
+        prefs["desired_role"] = contact["title"]
+        prefilled = True
+    merged["preferences"] = prefs
+
+    return merged, prefilled
+
+
 def _empty_profile_data() -> dict[str, Any]:
     return {
         "personal": {},
@@ -112,7 +214,8 @@ def _merge_update(existing: dict[str, Any], update: UserProfileUpdate) -> dict[s
     return data
 
 
-def _profile_to_out(user_id: str, data: dict[str, Any], photo_key: str | None, updated_at) -> UserProfileOut:
+def _profile_to_out(user_id: str, data: dict[str, Any], photo_key: str | None, updated_at,
+                    prefilled_from_resume: bool = False) -> UserProfileOut:
     """Convert raw profile data dict to UserProfileOut schema."""
     personal = PersonalInfo(**(data.get("personal") or {}))
     education = [ProfileEducationItem(**e) if isinstance(e, dict) else e
@@ -134,6 +237,7 @@ def _profile_to_out(user_id: str, data: dict[str, Any], photo_key: str | None, u
         profile_photo_key=photo_key,
         profile_completion=completion,
         updated_at=updated_at,
+        prefilled_from_resume=prefilled_from_resume,
     )
 
 
@@ -163,7 +267,9 @@ def get_my_profile(
         "skills": profile.skills or [],
         "preferences": profile.preferences or {},
     }
-    return _profile_to_out(current_user.id, data, profile.profile_photo_key, profile.updated_at)
+    data, prefilled = _merge_latest_resume(db, current_user.id, data)
+    return _profile_to_out(current_user.id, data, profile.profile_photo_key, profile.updated_at,
+                           prefilled_from_resume=prefilled)
 
 
 @router.put("/me", response_model=UserProfileOut)

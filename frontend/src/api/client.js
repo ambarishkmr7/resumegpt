@@ -1,4 +1,6 @@
 // Central API client. Reads the JWT from localStorage and attaches it.
+import { clearUserScopedStorage } from "../utils/session";
+
 export const BASE = import.meta.env.VITE_API_BASE || "";
 
 function authHeaders() {
@@ -12,14 +14,124 @@ function authorHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Endpoints where a 401 means "those credentials are wrong", not "your session
+// expired" — wiping the stored token there would log a user out just for
+// mistyping a password on a second tab.
+const PUBLIC_AUTH_PATHS = [
+  "/api/auth/login",
+  "/api/auth/login-json",
+  "/api/auth/register",
+  "/api/auth/admin-register",
+  "/api/auth/google",
+  "/api/auth/facebook",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/guest",
+  "/api/author/login",
+  "/api/author/register",
+];
+
+// A 401 on an authenticated endpoint means the token is expired/invalid/revoked.
+// Drop it (and the cached user) immediately so the app falls back to the logged
+// -out state instead of retrying every call with a dead token. AuthContext
+// listens for the event and clears its React state; route guards then send the
+// user to /login.
+//
+// Only 401 clears the session — 403 ("Admin access required") comes from a
+// perfectly valid token that simply lacks permission.
+function clearSessionOn401(url) {
+  let path = url || "";
+  try { path = new URL(url, window.location.origin).pathname; } catch (_) {}
+  if (PUBLIC_AUTH_PATHS.some((p) => path.startsWith(p))) return;
+
+  if (path.startsWith("/api/author/")) {
+    if (!localStorage.getItem("author_token")) return;
+    localStorage.removeItem("author_token");
+    window.dispatchEvent(new CustomEvent("auth:unauthorized", { detail: { scope: "author" } }));
+    return;
+  }
+
+  if (!localStorage.getItem("token") && !localStorage.getItem("user")) return;
+  localStorage.removeItem("token");
+  invalidateCache();  // every cached read belonged to the session that just died
+  // Drop every cache tied to the person whose session just died — the same purge
+  // a deliberate sign-out does.
+  clearUserScopedStorage({ keepExpiredFlag: true });
+  // Lets the login screen explain why the user landed back there.
+  try { sessionStorage.setItem("session_expired", "1"); } catch (_) {}
+  window.dispatchEvent(new CustomEvent("auth:unauthorized", { detail: { scope: "user" } }));
+}
+
+// ── Request coalescing ────────────────────────────────────────────────────────
+// One screen asks for the same GET several times over: the page itself, the
+// Topbar's usage meter, AuthContext's avatar lookup, a modal — and React
+// StrictMode runs every mount effect twice in dev. Navigating "/" → "/dashboard"
+// mounts two pages that each want /resumes, /profile/me and /public/stats, so a
+// single dashboard visit fired each of those four-plus times.
+//
+// These are all pure reads, so concurrent callers can share one response.
+//
+// Two levels, deliberately different:
+//  - in-flight only (ttlMs 0) for anything user-specific that a mutation can
+//    change. Nothing survives settlement, so a save is never masked.
+//  - short TTL for public/static content (plan catalogue, CMS copy, template
+//    list, marketing stats) so page-to-page navigation doesn't refetch it.
+//
+// Keys are prefixed by domain so a mutation can drop just its own group.
+const _inflight = new Map();
+const _cache = new Map();
+const STATIC_TTL_MS = 60_000;   // admin-authored / public content
+const CATALOGUE_TTL_MS = 5_000; // plans & refills: cheap to re-check, must feel live
+// User data that two pages in a row both want. Short enough that a background
+// change shows up almost immediately, and every mutation invalidates its group
+// explicitly, so this never hides the user's own edits.
+const USER_TTL_MS = 3_000;
+
+function coalesce(key, run, { ttlMs = 0 } = {}) {
+  if (ttlMs) {
+    const hit = _cache.get(key);
+    if (hit && Date.now() - hit.at < ttlMs) return Promise.resolve(hit.value);
+  }
+  const pending = _inflight.get(key);
+  if (pending) return pending;
+
+  const p = run()
+    .then((value) => {
+      if (ttlMs) _cache.set(key, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => _inflight.delete(key));
+  _inflight.set(key, p);
+  return p;
+}
+
+/** Drop cached reads whose key starts with `prefix` (no arg ⇒ everything). */
+export function invalidateCache(prefix) {
+  if (!prefix) { _cache.clear(); return; }
+  for (const k of [..._cache.keys()]) {
+    if (k.startsWith(prefix)) _cache.delete(k);
+  }
+}
+
+// Anything that changes what the billing endpoints would answer must drop the
+// catalogue cache, so a fresh purchase or plan edit is never served stale.
+export function invalidateBillingCache() {
+  invalidateCache("sub:");
+}
+
 async function handle(res) {
   if (!res.ok) {
+    if (res.status === 401) clearSessionOn401(res.url);
     let detail = `Request failed (${res.status})`;
     try {
       const data = await res.json();
       detail = data.detail || detail;
     } catch (_) {}
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const err = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    // Callers need the status: the message is the server's prose ("Could not
+    // validate credentials"), which can't be reliably parsed for a code.
+    err.status = res.status;
+    throw err;
   }
   const ct = res.headers.get("content-type") || "";
   return ct.includes("application/json") ? res.json() : res;
@@ -93,7 +205,8 @@ export const api = {
       body: JSON.stringify({ current_password, new_password }),
     }).then(handle),
 
-  me: () => fetch(`${BASE}/api/auth/me`, { headers: authHeaders() }).then(handle),
+  me: () => coalesce("auth:me", () =>
+    fetch(`${BASE}/api/auth/me`, { headers: authHeaders() }).then(handle)),
 
   // ---- Staff (/sys-admin) ----
   adminLoginJson: (email, password) =>
@@ -116,30 +229,52 @@ export const api = {
     }).then(handle),
 
   // ---- Templates ----
-  templates: () => fetch(`${BASE}/api/templates`).then(handle),
+  templates: () => coalesce("static:templates", () =>
+    fetch(`${BASE}/api/templates`).then(handle), { ttlMs: STATIC_TTL_MS }),
 
   // ---- Resumes ----
-  listResumes: () => fetch(`${BASE}/api/resumes`, { headers: authHeaders() }).then(handle),
+  listResumes: () => coalesce("resumes:list", () =>
+    fetch(`${BASE}/api/resumes`, { headers: authHeaders() }).then(handle),
+    { ttlMs: USER_TTL_MS }),
 
-  getResume: (id) => fetch(`${BASE}/api/resumes/${id}`, { headers: authHeaders() }).then(handle),
+  // In-flight only: the editor autosaves, so this must never serve a settled
+  // copy. Dedupe alone is enough to collapse the editor's double mount.
+  getResume: (id) => coalesce(`resumes:one:${id}`, () =>
+    fetch(`${BASE}/api/resumes/${id}`, { headers: authHeaders() }).then(handle)),
 
-  createResume: (body) =>
-    fetch(`${BASE}/api/resumes`, {
+  // Every resume mutation drops the cached list, so the dashboard can never
+  // show a stale set right after the user creates, edits or deletes one.
+  createResume: (body) => {
+    invalidateCache("resumes:");
+    return fetch(`${BASE}/api/resumes`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
-    }).then(handle),
+    }).then(handle);
+  },
 
-  updateResume: (id, body) =>
-    fetch(`${BASE}/api/resumes/${id}`, {
+  updateResume: (id, body) => {
+    invalidateCache("resumes:");
+    return fetch(`${BASE}/api/resumes/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
-    }).then(handle),
+    }).then(handle);
+  },
 
-  deleteResume: (id) =>
-    fetch(`${BASE}/api/resumes/${id}`, { method: "DELETE", headers: authHeaders() })
-      .then((res) => { if (!res.ok) throw new Error("Delete failed"); return { ok: true }; }),
+  deleteResume: (id) => {
+    invalidateCache("resumes:");
+    return fetch(`${BASE}/api/resumes/${id}`, { method: "DELETE", headers: authHeaders() })
+      .then((res) => {
+        if (!res.ok) {
+          if (res.status === 401) clearSessionOn401(res.url);
+          const err = new Error("Delete failed");
+          err.status = res.status;
+          throw err;
+        }
+        return { ok: true };
+      });
+  },
 
   generateSample: (job_title, years_experience, name) =>
     fetch(`${BASE}/api/resumes/generate-sample`, {
@@ -149,6 +284,7 @@ export const api = {
     }).then(handle),
 
   uploadResume: (file, title) => {
+    invalidateCache("resumes:");
     const fd = new FormData();
     fd.append("file", file);
     fd.append("title", title || "Imported Resume");
@@ -169,12 +305,18 @@ export const api = {
     }).then(handle);
   },
 
-  ats: (content, job_description) =>
-    fetch(`${BASE}/api/resumes/ats`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ content, job_description }),
-    }).then(handle),
+  // A POST, but a pure scoring function of its body — identical concurrent
+  // requests (the editor's double mount) can share one response. In-flight only,
+  // keyed on the body, so a real edit always re-scores.
+  ats: (content, job_description) => {
+    const body = JSON.stringify({ content, job_description });
+    return coalesce(`ats:${body}`, () =>
+      fetch(`${BASE}/api/resumes/ats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body,
+      }).then(handle));
+  },
 
   suggest: (content, job_description) =>
     fetch(`${BASE}/api/resumes/suggest`, {
@@ -245,21 +387,28 @@ export const api = {
 
   // Subscription
   subscriptionStatus: () =>
-    fetch(`${BASE}/api/subscription/status`, { headers: authHeaders() }).then(handle),
+    coalesce("sub:status", () =>
+      fetch(`${BASE}/api/subscription/status`, { headers: authHeaders() }).then(handle)),
 
   // Usage meters: interview minutes + AI-token % + daily resume-upload quota.
   usageSummary: () =>
-    fetch(`${BASE}/api/subscription/usage`, { headers: authHeaders() }).then(handle),
+    coalesce("sub:usage", () =>
+      fetch(`${BASE}/api/subscription/usage`, { headers: authHeaders() }).then(handle)),
 
   // Dashboard nudges: recharge popup + personal loyalty coupon.
   subscriptionNudges: () =>
-    fetch(`${BASE}/api/subscription/nudges`, { headers: authHeaders() }).then(handle),
+    coalesce("sub:nudges", () =>
+      fetch(`${BASE}/api/subscription/nudges`, { headers: authHeaders() }).then(handle)),
 
-  // Public catalogue.
+  // Public catalogue — same answer for everyone, changes only on admin edits.
   plans: () =>
-    fetch(`${BASE}/api/subscription/plans`, { headers: authHeaders() }).then(handle),
+    coalesce("sub:plans", () =>
+      fetch(`${BASE}/api/subscription/plans`, { headers: authHeaders() }).then(handle),
+      { ttlMs: CATALOGUE_TTL_MS }),
   refillPacks: () =>
-    fetch(`${BASE}/api/subscription/refill-packs`, { headers: authHeaders() }).then(handle),
+    coalesce("sub:refills", () =>
+      fetch(`${BASE}/api/subscription/refill-packs`, { headers: authHeaders() }).then(handle),
+      { ttlMs: CATALOGUE_TTL_MS }),
 
   validateCoupon: (code, kind, target_id) =>
     fetch(`${BASE}/api/subscription/coupon/validate`, {
@@ -284,15 +433,50 @@ export const api = {
       body: JSON.stringify({ plan_id }),
     }).then(handle),
 
-  verifyPayment: (data) =>
-    fetch(`${BASE}/api/subscription/verify-payment`, {
+  // Turn the recurring mandate on/off for the active plan. Enabling answers
+  // { requires_checkout: true, subscription_id, ... } — run Razorpay Checkout
+  // with those, then verifyPayment().
+  setAutoPay: (enabled) => {
+    invalidateBillingCache();
+    return fetch(`${BASE}/api/subscription/auto-pay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ enabled }),
+    }).then(handle);
+  },
+
+  verifyPayment: (data) => {
+    invalidateBillingCache();
+    return fetch(`${BASE}/api/subscription/verify-payment`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(data),
-    }).then(handle),
+    }).then(handle);
+  },
 
   paymentHistory: () =>
     fetch(`${BASE}/api/subscription/payments`, { headers: authHeaders() }).then(handle),
+
+  // `ref` may be our payment id, the Razorpay order id, or the Razorpay payment id.
+  paymentReceipt: (ref) =>
+    fetch(`${BASE}/api/subscription/payments/${encodeURIComponent(ref)}/receipt`, {
+      headers: authHeaders(),
+    }).then(handle),
+
+  downloadInvoice: async (ref) => {
+    const res = await fetch(`${BASE}/api/subscription/payments/${encodeURIComponent(ref)}/invoice`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      if (res.status === 401) clearSessionOn401(res.url);
+      let detail = "Invoice download failed";
+      try { const d = await res.json(); detail = d.detail || detail; } catch (_) {}
+      const err = new Error(detail);
+      err.status = res.status;
+      throw err;
+    }
+    return { blob: await res.blob() };
+  },
 
   // ---- Elite AI Features ----
   careerCounseling: (content, question, history = []) =>
@@ -411,31 +595,46 @@ export const api = {
       headers: authHeaders(),
     });
     if (res.status === 402) return { needsSub: true };
-    if (!res.ok) throw new Error("Download failed");
+    if (!res.ok) {
+      if (res.status === 401) clearSessionOn401(res.url);
+      const err = new Error("Download failed");
+      err.status = res.status;
+      throw err;
+    }
     return { blob: await res.blob() };
   },
 
   // Fetch the originally-uploaded file as a blob (for "view as uploaded" mode).
-  fetchOriginal: async (id) => {
+  // The uploaded file is fixed for the life of a resume, so re-downloading it
+  // per mount is pure waste — this was fetching the same PDF twice on every
+  // editor open. Blobs are immutable, so callers can safely share one.
+  fetchOriginal: (id) => coalesce(`resumes:original:${id}`, async () => {
     const res = await fetch(`${BASE}/api/resumes/${id}/original`, {
       headers: authHeaders(),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 401) clearSessionOn401(res.url);
+      return null;
+    }
     const blob = await res.blob();
     return { blob, type: res.headers.get("content-type") || "application/pdf" };
-  },
+  }, { ttlMs: USER_TTL_MS }),
 
   // ---- Admin ----
   adminDashboard: () =>
     fetch(`${BASE}/api/admin/dashboard`, { headers: authHeaders() }).then(handle),
   adminCmsPages: () =>
     fetch(`${BASE}/api/admin/cms`, { headers: authHeaders() }).then(handle),
-  adminUpdateCms: (slug, body) =>
-    fetch(`${BASE}/api/admin/cms/${slug}`, {
+  // Public CMS copy is cached for a minute — an admin saving an edit must see
+  // it on the site right away, not after the TTL lapses.
+  adminUpdateCms: (slug, body) => {
+    invalidateCache("static:cms:");
+    return fetch(`${BASE}/api/admin/cms/${slug}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
-    }).then(handle),
+    }).then(handle);
+  },
   makeAdmin: () =>
     fetch(`${BASE}/api/admin/make-admin`, { method: "POST", headers: authHeaders() }).then(handle),
   adminPayments: ({ page = 1, page_size = 20, status = "", type = "" } = {}) => {
@@ -466,25 +665,35 @@ export const api = {
   },
   adminPlans: ({ page = 1, page_size = 50 } = {}) =>
     fetch(`${BASE}/api/admin/plans?page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
-  adminSavePlan: (id, body) =>
-    fetch(`${BASE}/api/admin/plans${id ? `/${id}` : ""}`, {
+  // Plan/refill edits change the public catalogue — drop its cache so the
+  // pricing grid reflects the edit immediately rather than up to a tick later.
+  adminSavePlan: (id, body) => {
+    invalidateBillingCache();
+    return fetch(`${BASE}/api/admin/plans${id ? `/${id}` : ""}`, {
       method: id ? "PUT" : "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
-    }).then(handle),
-  adminDeletePlan: (id) =>
-    fetch(`${BASE}/api/admin/plans/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle),
+    }).then(handle);
+  },
+  adminDeletePlan: (id) => {
+    invalidateBillingCache();
+    return fetch(`${BASE}/api/admin/plans/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle);
+  },
 
   adminRefills: ({ page = 1, page_size = 50 } = {}) =>
     fetch(`${BASE}/api/admin/refill-packs?page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
-  adminSaveRefill: (id, body) =>
-    fetch(`${BASE}/api/admin/refill-packs${id ? `/${id}` : ""}`, {
+  adminSaveRefill: (id, body) => {
+    invalidateBillingCache();
+    return fetch(`${BASE}/api/admin/refill-packs${id ? `/${id}` : ""}`, {
       method: id ? "PUT" : "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
-    }).then(handle),
-  adminDeleteRefill: (id) =>
-    fetch(`${BASE}/api/admin/refill-packs/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle),
+    }).then(handle);
+  },
+  adminDeleteRefill: (id) => {
+    invalidateBillingCache();
+    return fetch(`${BASE}/api/admin/refill-packs/${id}`, { method: "DELETE", headers: authHeaders() }).then(handle);
+  },
 
   adminCoupons: ({ page = 1, page_size = 20 } = {}) =>
     fetch(`${BASE}/api/admin/coupons?page=${page}&page_size=${page_size}`, { headers: authHeaders() }).then(handle),
@@ -539,32 +748,44 @@ export const api = {
       body: JSON.stringify({ content: resumeContent }),
     }).then(handle),
 
+  // Public, identical for every visitor and only changed by an admin edit —
+  // safe to hold briefly so moving between pages doesn't refetch it.
   getPublicStats: () =>
-    fetch(`${BASE}/api/admin/public/stats`).then(handle),
+    coalesce("static:stats", () =>
+      fetch(`${BASE}/api/admin/public/stats`).then(handle), { ttlMs: STATIC_TTL_MS }),
 
   getCmsPage: (slug) =>
-    fetch(`${BASE}/api/admin/public/cms/${slug}`).then(handle),
+    coalesce(`static:cms:${slug}`, () =>
+      fetch(`${BASE}/api/admin/public/cms/${slug}`).then(handle), { ttlMs: STATIC_TTL_MS }),
   listCmsPages: () =>
-    fetch(`${BASE}/api/admin/public/cms`).then(handle),
+    coalesce("static:cms:__list", () =>
+      fetch(`${BASE}/api/admin/public/cms`).then(handle), { ttlMs: STATIC_TTL_MS }),
   getSubscriptionPage: () =>
-    fetch(`${BASE}/api/admin/public/cms/subscription`).then(handle),
+    coalesce("static:cms:subscription", () =>
+      fetch(`${BASE}/api/admin/public/cms/subscription`).then(handle), { ttlMs: STATIC_TTL_MS }),
   // Homepage subscription panel content — sourced from cms_pages record 'cms_sub'.
   getSubscriptionContent: () =>
-    fetch(`${BASE}/api/admin/public/cms/cms_sub`).then(handle),
+    coalesce("static:cms:cms_sub", () =>
+      fetch(`${BASE}/api/admin/public/cms/cms_sub`).then(handle), { ttlMs: STATIC_TTL_MS }),
 
 
   // ---- Profile ----
   getProfile: () =>
-    fetch(`${BASE}/api/profile/me`, { headers: authHeaders() }).then(handle),
+    coalesce("profile:me", () =>
+      fetch(`${BASE}/api/profile/me`, { headers: authHeaders() }).then(handle),
+      { ttlMs: USER_TTL_MS }),
 
-  updateProfile: (body) =>
-    fetch(`${BASE}/api/profile/me`, {
+  updateProfile: (body) => {
+    invalidateCache("profile:");
+    return fetch(`${BASE}/api/profile/me`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
-    }).then(handle),
+    }).then(handle);
+  },
 
   uploadProfilePhoto: (file) => {
+    invalidateCache("profile:");
     const fd = new FormData();
     fd.append("file", file);
     return fetch(`${BASE}/api/profile/photo`, {

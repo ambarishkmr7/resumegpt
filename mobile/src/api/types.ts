@@ -342,7 +342,12 @@ export interface InterviewSessionDetail extends InterviewSessionSummary {
 // Live WS messages (server -> client)
 export type LiveServerMessage =
   | { type: "audio"; data: string }
-  | { type: "status"; state: "connected" | "reconnected" | "reconnecting" | "time_up" }
+  | {
+      type: "status";
+      // "wrapping_up": the interviewer called end_interview and the server is
+      // closing the session after its closing remarks.
+      state: "connected" | "reconnected" | "reconnecting" | "time_up" | "wrapping_up";
+    }
   | { type: "interrupted" }
   | { type: "report"; data: { session_id?: string; report?: InterviewReport; duration_seconds?: number } }
   | { type: "error"; message?: string; code?: string };

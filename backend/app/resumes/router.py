@@ -184,12 +184,20 @@ def delete_resume(resume_id: str, user: User = Depends(get_current_user), db: Se
 
 @router.post("/upload", response_model=ResumeOut, status_code=201)
 async def upload_resume(
+    request: Request,
     file: UploadFile = File(...),
     title: str = Form("Imported Resume"),
     template_id: str = Form("classic"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Reject an oversized body before reading it. The authoritative check is
+    # after read() below (Content-Length can lie), but this stops an honest
+    # client's 500MB upload from being buffered in full first. A hard limit
+    # still belongs in the reverse proxy.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > settings.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File exceeds {settings.MAX_UPLOAD_MB}MB")
     # Enforce the same per-user resume cap before doing any expensive parsing.
     if db.query(Resume).filter(Resume.user_id == user.id).count() >= MAX_RESUMES:
         raise HTTPException(

@@ -142,10 +142,20 @@ export default function Editor() {
   const atsTimer = useRef();
   const refFileRef = useRef();
   const firstLoad = useRef(true);
+  // Snapshot of what the server gave us, so the debounced auto-save can tell a
+  // real edit from the initial load and not immediately PUT the file back.
+  const savedSnapshot = useRef(null);
 
   useEffect(() => {
+    // Navigating between two resumes reuses this component, so the per-document
+    // refs have to be reset here rather than relying on a remount.
+    firstLoad.current = true;
+    savedSnapshot.current = null;
     Promise.all([api.getResume(id), api.templates()])
       .then(([r, tpls]) => {
+        savedSnapshot.current = JSON.stringify({
+          title: r.title, template_id: r.template_id, content: r.content,
+        });
         setTitle(r.title); setTemplateId(r.template_id);
         setContent(r.content); setTemplates(tpls);
       })
@@ -163,10 +173,6 @@ export default function Editor() {
     return () => setOriginalUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
   }, [id]);
 
-  useEffect(() => {
-    if (content && firstLoad.current) { firstLoad.current = false; rescore(content, ""); }
-  }, [content]);
-
   // Close toolbar "more" dropdown on outside click
   useEffect(() => {
     const handler = (e) => {
@@ -178,22 +184,35 @@ export default function Editor() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Debounced auto-save
+  // Debounced auto-save — skipped while the document still matches what the
+  // server sent, so merely opening a resume no longer writes it straight back.
   useEffect(() => {
     if (!content) return;
+    const next = JSON.stringify({ title, template_id: templateId, content });
+    if (next === savedSnapshot.current) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       setStatus("Saving…");
       try {
         await api.updateResume(id, { title, template_id: templateId, content });
+        savedSnapshot.current = next;
         setStatus("Saved"); setTimeout(() => setStatus(""), 1200);
       } catch { setStatus("Save failed"); }
     }, 900);
     return () => clearTimeout(saveTimer.current);
   }, [title, templateId, content, id]);
 
+  // ATS re-score: immediate on first load, debounced on subsequent edits. These
+  // were two separate effects, and because effects run in order within a commit
+  // the second one saw firstLoad already cleared by the first — so every open
+  // fired two /ats calls back to back.
   useEffect(() => {
-    if (!content || firstLoad.current) return;
+    if (!content) return;
+    if (firstLoad.current) {
+      firstLoad.current = false;
+      rescore(content, jobDescription);
+      return;
+    }
     clearTimeout(atsTimer.current);
     atsTimer.current = setTimeout(() => rescore(content, jobDescription), 1100);
     return () => clearTimeout(atsTimer.current);
@@ -255,7 +274,7 @@ export default function Editor() {
   const activeTpl = templates.find((t) => t.id === templateId) || null;
   const isEliteUnlocked = !!subStatus?.is_subscribed;
 
-  const openEliteTab = () => {
+  const openEliteTab = async () => {
     const isGuest = user?.email?.endsWith("@guest.resumesgpt.in");
     if (!user || isGuest) {
       navigate("/login");
@@ -263,9 +282,22 @@ export default function Editor() {
     }
     if (isEliteUnlocked) {
       setRightTab("elite"); setMobileView("elite");
-    } else {
-      setShowSub(true);
+      return;
     }
+    // subStatus === null means the mount-time fetch hasn't landed or quietly
+    // failed. Treating "unknown" as "not subscribed" is what pushed a purchase
+    // modal at people who had already paid — re-check before asking for money.
+    if (subStatus === null) {
+      try {
+        const fresh = await api.subscriptionStatus();
+        setSubStatus(fresh);
+        if (fresh?.is_subscribed) { setRightTab("elite"); setMobileView("elite"); return; }
+      } catch {
+        setError("Couldn't check your plan just now. Please retry in a moment.");
+        return;
+      }
+    }
+    setShowSub(true);
   };
   const isPdf = originalType.includes("pdf");
 

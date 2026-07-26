@@ -91,8 +91,14 @@ export default function Dashboard() {
     api.plans().then((d) => setPlans(d.plans || [])).catch(() => {});
     api.subscriptionNudges().then((n) => {
       setNudges(n);
+      if (!n.show_recharge) {
+        // Nothing to nudge about any more (e.g. the user just subscribed) —
+        // make sure a popup queued earlier can't pop back up.
+        setShowRecharge(false);
+        return;
+      }
       // Recharge popup: once per session so it doesn't nag on every visit.
-      if (n.show_recharge && !sessionStorage.getItem("recharge_popup_shown")) {
+      if (!sessionStorage.getItem("recharge_popup_shown")) {
         sessionStorage.setItem("recharge_popup_shown", "1");
         setShowRecharge(true);
       }
@@ -163,7 +169,10 @@ export default function Dashboard() {
   const isSubscribed = !!subStatus?.is_subscribed;
   // Freepass (100%-off coupon) users never see purchase/upsell prompts.
   const hidePurchase = !!subStatus?.used_freepass;
-  const fromPrice = plans.length ? Math.min(...plans.map((p) => p.price_inr)) : 500;
+  // "Plans from ₹X" means the cheapest *paid* tier — the ₹0 free plan would
+  // otherwise make this read "Plans from ₹0 / month".
+  const paidPrices = plans.filter((p) => !p.is_free).map((p) => p.price_inr);
+  const fromPrice = paidPrices.length ? Math.min(...paidPrices) : 500;
   const statResumes = siteStats.total_resumes !== null ? siteStats.total_resumes.toLocaleString("en-IN") : "…";
   const statAts = siteStats.ats_pass_rate !== null ? `${siteStats.ats_pass_rate}%` : "…";
 
@@ -376,34 +385,28 @@ export default function Dashboard() {
             <h2 className="section-title">Choose Your Plan</h2>
             <p className="section-sub">Monthly plans with mock-interview minutes &amp; AI usage. Cancel anytime · top up with refills when you need more.</p>
             <div className="plans-row" style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
-              <div className="plan-box" style={{ flex: "1 1 220px", maxWidth: 300 }}>
-                <div className="plan-box-name">Free</div>
-                <div className="plan-box-price"><span>₹</span>0</div>
-                <div className="plan-box-period">forever</div>
-                <ul className="plan-box-features">
-                  <li>✓ Create &amp; edit unlimited resumes</li>
-                  <li>✓ 30 professional templates</li>
-                  <li>✓ ATS scoring &amp; suggestions</li>
-                  <li>✓ AI career analysis &amp; roadmap</li>
-                  <li>✓ AI resume rewriting &amp; cover letters</li>
-                  <li>✓ Free trial interview minutes</li>
-                </ul>
-                <button className="btn btn-ghost" style={{ width: "100%" }} disabled>{isSubscribed ? "Free Plan" : "✓ Current Plan"}</button>
-              </div>
               {plans.map((p) => (
-                <div key={p.id} className={`plan-box ${p.is_default ? "" : "elite"} ${isSubscribed && subStatus?.plan === p.slug ? "current" : ""}`}
+                <div key={p.id} className={`plan-box ${p.is_free || p.is_default ? "" : "elite"} ${isSubscribed && subStatus?.plan === p.slug ? "current" : ""}`}
                   style={{ flex: "1 1 220px", maxWidth: 300 }}>
                   {p.badge && <div className="plan-box-popular">{p.badge}</div>}
                   <div className="plan-box-name">{p.name}</div>
                   <div className="plan-box-price"><span>₹</span>{p.price_inr.toLocaleString("en-IN")}</div>
                   <div className="plan-box-period">
-                    per month · {p.interview_minutes} min
-                    {p.monthly_tokens ? ` · ${(p.monthly_tokens / 1_000_000).toLocaleString("en-IN")}M tokens` : ""}
+                    {p.is_free ? "forever" : (
+                      <>
+                        per month · {p.interview_minutes} min
+                        {p.monthly_tokens ? ` · ${(p.monthly_tokens / 1_000_000).toLocaleString("en-IN")}M tokens` : ""}
+                      </>
+                    )}
                   </div>
                   <ul className="plan-box-features">
                     {(p.features || []).map((f, i) => <li key={i}>✓ {f}</li>)}
                   </ul>
-                  {isSubscribed && subStatus?.plan === p.slug ? (
+                  {p.is_free ? (
+                    <button className="btn btn-ghost" style={{ width: "100%" }} disabled>
+                      {isSubscribed ? "Free Plan" : "✓ Current Plan"}
+                    </button>
+                  ) : isSubscribed && subStatus?.plan === p.slug ? (
                     <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
                   ) : (
                     <button className="btn btn-primary" style={{ width: "100%", background: "linear-gradient(135deg, #d97706, #b45309)" }}
@@ -505,8 +508,11 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Recharge nudge — shown once per session when the plan lapsed or balance is low */}
-      {showRecharge && !showSub && !hidePurchase && (
+      {/* Recharge nudge — shown once per session when the plan lapsed or balance is low.
+          Gated on the latest server answer as well as the local flag: without that, a
+          popup queued before a purchase re-appears the moment the checkout modal closes,
+          telling a user who just paid that they have no active plan. */}
+      {showRecharge && nudges?.show_recharge && !showSub && !hidePurchase && (
         <div className="modal-overlay" onClick={() => setShowRecharge(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, textAlign: "center" }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>

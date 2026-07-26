@@ -70,6 +70,8 @@ def _create_razorpay_plan(plan: Plan) -> Optional[str]:
     Returns the razorpay plan id, or None in demo mode / on failure."""
     if not (settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET):
         return None
+    if (plan.price_inr or 0) <= 0:
+        return None  # the free tier has nothing to auto-charge
     try:
         resp = httpx.post(
             "https://api.razorpay.com/v1/plans",
@@ -142,6 +144,7 @@ def admin_update_plan(plan_id: str, body: PlanIn, _: User = Depends(require_admi
         raise HTTPException(status_code=404, detail="Plan not found")
     if body.is_default and not plan.is_default:
         db.query(Plan).filter(Plan.is_default == True).update({Plan.is_default: False})  # noqa: E712
+    price_changed = plan.price_inr != body.price_inr
     plan.name = body.name
     plan.description = body.description
     plan.price_inr = body.price_inr
@@ -153,6 +156,18 @@ def admin_update_plan(plan_id: str, body: PlanIn, _: User = Depends(require_admi
     plan.is_active = body.is_active
     plan.is_default = body.is_default
     plan.display_order = body.display_order
+
+    # Razorpay plans are immutable — editing the price here would otherwise leave
+    # the old amount attached to the recurring plan, so auto-pay would keep
+    # charging the previous price while the site advertised the new one. Mint a
+    # fresh Razorpay plan for future mandates. Mandates already authorised keep
+    # the price their customer agreed to, which is the correct outcome.
+    if price_changed and plan.razorpay_plan_id:
+        old = plan.razorpay_plan_id
+        plan.razorpay_plan_id = _create_razorpay_plan(plan)
+        logger.info("Plan %s price changed to ₹%s — razorpay plan %s → %s",
+                    plan.slug, plan.price_inr, old, plan.razorpay_plan_id)
+
     db.commit()
     db.refresh(plan)
     return _plan_dict(plan)

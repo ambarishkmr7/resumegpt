@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
-import { api, BASE } from "../api/client";
+import { api, BASE, invalidateCache } from "../api/client";
+import { clearUserScopedStorage } from "../utils/session";
 
 const AuthContext = createContext(null);
 
@@ -40,18 +41,28 @@ export function AuthProvider({ children }) {
       .me()
       .then((freshUser) => { setUser(freshUser); setLoading(false); })
       .catch((err) => {
-        const msg = err?.message || "";
-        const statusMatch = msg.match(/\((\d{3})\)/);
-        const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : null;
-        if (status === 401 || status === 403) {
-          // Only clear if the token hasn't been replaced by a concurrent login
-          if (localStorage.getItem("token") === token) {
-            localStorage.removeItem("token");
-            setUser(null);
-          }
-        }
+        // 401 => expired/invalid token. The API client has already dropped it
+        // from storage; mirror that in React state so guards send us to /login.
+        // (A network error leaves the cached user alone so offline reloads
+        // don't look like a logout.)
+        if (err?.status === 401) setUser(null);
         setLoading(false);
       });
+  }, []);
+
+  // Any authenticated request that comes back 401 kills the session, not just
+  // the /me check above — otherwise a page that only calls, say, /api/resumes
+  // would keep rendering as "logged in" with every request failing.
+  useEffect(() => {
+    const onUnauthorized = (e) => {
+      if (e.detail?.scope === "author") return; // author area manages its own token
+      setUserState(null);
+      setProfilePhoto(null);
+      photoFetched.current = false;
+      setLoading(false);
+    };
+    window.addEventListener("auth:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("auth:unauthorized", onUnauthorized);
   }, []);
 
   // Fetch profile photo once per session
@@ -89,7 +100,11 @@ export function AuthProvider({ children }) {
   const loginWithToken = (data) => persist(data);
 
   const logout = useCallback(async () => {
+    // An already-expired token makes this 401, which flags "session expired" —
+    // wrong wording for a deliberate sign-out, so clear the flag afterwards.
     try { await api.logout(); } catch (_) {}
+    invalidateCache();  // never serve the next user this one's data
+    clearUserScopedStorage();
     localStorage.removeItem("token");
     setUser(null);
     setProfilePhoto(null);

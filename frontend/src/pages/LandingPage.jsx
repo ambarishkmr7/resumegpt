@@ -243,44 +243,34 @@ export default function LandingPage() {
             <h2 className="section-title">Choose Your Plan</h2>
             <p className="section-sub">Monthly plans with AI mock-interview minutes. Cancel anytime · top up with refills.</p>
             <div className="plans-row two-col">
-              <div className="plan-box">
-                <div className="plan-box-name">Free</div>
-                <div className="plan-box-price"><span>₹</span>0</div>
-                <div className="plan-box-period">forever</div>
-                <ul className="plan-box-features">
-                  <li>✓ Create &amp; edit unlimited resumes</li>
-                  <li>✓ 30 professional templates</li>
-                  <li>✓ ATS scoring &amp; suggestions</li>
-                  <li>✓ AI career analysis</li>
-                  <li>✓ Career roadmap</li>
-                  <li>✓ PDF / DOCX download</li>
-                  <li>✓ AI resume rewriting</li>
-                  <li>✓ Cover letter generator</li>
-                </ul>
-                {user ? (
-                  <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => navigate("/dashboard")}>
-                    Go to Dashboard →
-                  </button>
-                ) : (
-                  <Link to="/register" className="btn btn-ghost" style={{ width: "100%", minHeight: "auto", minWidth: "auto" }}>
-                    Get Started Free
-                  </Link>
-                )}
-              </div>
               {plans.length > 0 ? (
                 plans.map((p) => (
-                  <div key={p.id} className={`plan-box elite ${isSubscribed && subStatus?.plan === p.slug ? "current" : ""}`}>
+                  <div key={p.id} className={`plan-box ${p.is_free ? "" : "elite"} ${!p.is_free && isSubscribed && subStatus?.plan === p.slug ? "current" : ""}`}>
                     {p.badge && <div className="plan-box-popular">✨ {p.badge.toUpperCase()}</div>}
                     <div className="plan-box-name">{p.name}</div>
                     <div className="plan-box-price"><span>₹</span>{p.price_inr.toLocaleString("en-IN")}</div>
                     <div className="plan-box-period">
-                      per month · {p.interview_minutes} min
-                      {p.monthly_tokens ? ` · ${(p.monthly_tokens / 1_000_000).toLocaleString("en-IN")}M tokens` : ""}
+                      {p.is_free ? "forever" : (
+                        <>
+                          per month · {p.interview_minutes} min
+                          {p.monthly_tokens ? ` · ${(p.monthly_tokens / 1_000_000).toLocaleString("en-IN")}M tokens` : ""}
+                        </>
+                      )}
                     </div>
                     <ul className="plan-box-features">
                       {(p.features || []).map((f, i) => <li key={i}>✓ {f}</li>)}
                     </ul>
-                    {isSubscribed && subStatus?.plan === p.slug ? (
+                    {p.is_free ? (
+                      user ? (
+                        <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => navigate("/dashboard")}>
+                          Go to Dashboard →
+                        </button>
+                      ) : (
+                        <Link to="/register" className="btn btn-ghost" style={{ width: "100%", minHeight: "auto", minWidth: "auto" }}>
+                          Get Started Free
+                        </Link>
+                      )
+                    ) : isSubscribed && subStatus?.plan === p.slug ? (
                       <button className="btn btn-ghost" style={{ width: "100%" }} disabled>✓ Current Plan</button>
                     ) : (
                       <button

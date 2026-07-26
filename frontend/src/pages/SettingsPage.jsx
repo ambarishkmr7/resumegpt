@@ -1,9 +1,10 @@
 // User settings: profile management, password change, current plan info,
 // payment history, and percent-based usage meters.
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { api } from "../api/client";
+import { ensureRazorpay } from "../utils/razorpay";
 import Topbar from "../components/Topbar.jsx";
 import Footer from "../components/Footer.jsx";
 import UsageMeter from "../components/UsageMeter.jsx";
@@ -15,19 +16,120 @@ const TABS = [
   { id: "account", label: "🔐 Account" },
 ];
 
+function AutoPayCard({ status, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const navigate = useNavigate();
+
+  const on = !!status?.auto_pay;
+
+  const toggle = async (enabled) => {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      const res = await api.setAutoPay(enabled);
+      if (res.requires_checkout) {
+        // Checkout owns `busy` from here — its handler/ondismiss clears it.
+        // Razorpay has no "resume" for a mandate — switching auto-pay back on
+        // means authorising a new one. Nothing is charged today: the mandate
+        // starts at the end of the period already paid for.
+        await ensureRazorpay();
+        const rzp = new window.Razorpay({
+          key: res.razorpay_key_id,
+          subscription_id: res.subscription_id,
+          name: "resumesGPT",
+          description: `Auto-payment for ${status.plan_name || status.plan}`,
+          image: "/logo.png",
+          handler: async (resp) => {
+            try {
+              await api.verifyPayment({
+                razorpay_payment_id: resp.razorpay_payment_id,
+                razorpay_signature: resp.razorpay_signature,
+                razorpay_subscription_id: resp.razorpay_subscription_id || res.subscription_id,
+              });
+              onChanged?.();
+              navigate(`/payment/success/${encodeURIComponent(res.payment_ref)}`);
+            } catch (e) {
+              setErr("Could not confirm the mandate: " + e.message);
+            } finally { setBusy(false); }
+          },
+          theme: { color: "#d97706" },
+          modal: { ondismiss: () => setBusy(false) },
+        });
+        rzp.open();
+        return;
+      }
+      setMsg(res.message);
+      onChanged?.();
+      setBusy(false);
+    } catch (e) {
+      setErr(e.message);
+      setBusy(false);
+    }
+  };
+
+  if (!status?.is_subscribed) return null;
+
+  return (
+    <div style={{
+      padding: "16px 20px", borderRadius: 12, border: "1px solid var(--line)",
+      background: "var(--paper-2,#fffdf8)", marginBottom: 24,
+    }}>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 260px" }}>
+          <div style={{ fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+            Auto-payment
+            <span style={{
+              fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999,
+              color: on ? "#16a34a" : "#92400e", background: on ? "#dcfce7" : "#fef3c7",
+            }}>{on ? "ON" : "OFF"}</span>
+          </div>
+          <div style={{ fontSize: 14, color: "var(--ink-soft)", marginTop: 6 }}>
+            {on
+              ? `Your plan renews automatically each month. ${
+                  status.current_period_end
+                    ? `Next charge around ${new Date(status.current_period_end).toLocaleDateString()}.`
+                    : ""}`
+              : status.auto_pay_available
+              ? "Your plan will simply expire at the end of this cycle unless you pay again. Turn auto-payment on to renew without thinking about it."
+              : "This plan isn't set up for auto-payment. Renew it manually from the plans screen when it expires."}
+          </div>
+        </div>
+        <button
+          className={on ? "btn btn-ghost" : "btn btn-primary"}
+          disabled={busy || (!on && !status.auto_pay_available)}
+          onClick={() => toggle(!on)}
+          style={{ flexShrink: 0 }}
+        >
+          {busy ? "Working…" : on ? "Turn off auto-payment" : "Turn on auto-payment"}
+        </button>
+      </div>
+      {status.cancel_at_period_end && status.current_period_end && (
+        <div style={{ fontSize: 13, color: "#92400e", marginTop: 10 }}>
+          Auto-payment is cancelled — your plan stays active until{" "}
+          {new Date(status.current_period_end).toLocaleDateString()}.
+        </div>
+      )}
+      {msg && <div style={{ fontSize: 13, color: "#16a34a", marginTop: 10 }}>{msg}</div>}
+      {err && <div className="error" style={{ marginTop: 10 }}>{err}</div>}
+    </div>
+  );
+}
+
 function PlanTab() {
   const [status, setStatus] = useState(null);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.allSettled([api.subscriptionStatus(), api.paymentHistory()])
+  const load = useCallback(() => {
+    return Promise.allSettled([api.subscriptionStatus(), api.paymentHistory()])
       .then(([s, p]) => {
         if (s.status === "fulfilled") setStatus(s.value);
         if (p.status === "fulfilled") setPayments(p.value || []);
-      })
-      .finally(() => setLoading(false));
+      });
   }, []);
+
+  useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
 
   if (loading) return <p style={{ color: "var(--ink-soft)" }}>Loading…</p>;
 
@@ -50,7 +152,7 @@ function PlanTab() {
             <div style={{ fontSize: 14, color: "var(--ink-soft)", marginTop: 6 }}>
               ₹{(status.amount || 0).toLocaleString("en-IN")} / month
               {status.current_period_end &&
-                ` · renews ${new Date(status.current_period_end).toLocaleDateString()}`}
+                ` · ${status.auto_pay ? "renews" : "runs until"} ${new Date(status.current_period_end).toLocaleDateString()}`}
             </div>
           </>
         ) : (
@@ -65,6 +167,8 @@ function PlanTab() {
         )}
       </div>
 
+      <AutoPayCard status={status} onChanged={load} />
+
       <h3>Payment history</h3>
       {payments.length === 0 ? (
         <p style={{ color: "var(--ink-soft)", fontSize: 14 }}>No payments yet.</p>
@@ -72,7 +176,7 @@ function PlanTab() {
         <div style={{ overflowX: "auto" }}>
           <table className="admin-table" style={{ width: "100%" }}>
             <thead>
-              <tr><th>Date</th><th>Item</th><th>Type</th><th>Amount</th><th>Coupon</th><th>Status</th></tr>
+              <tr><th>Date</th><th>Item</th><th>Type</th><th>Amount</th><th>Coupon</th><th>Status</th><th>Invoice</th></tr>
             </thead>
             <tbody>
               {payments.map((p) => (
@@ -90,6 +194,13 @@ function PlanTab() {
                       color: p.status === "paid" ? "#16a34a" : p.status === "failed" ? "#dc2626" : "#92400e",
                       background: p.status === "paid" ? "#dcfce7" : p.status === "failed" ? "#fee2e2" : "#fef3c7",
                     }}>{p.status}</span>
+                  </td>
+                  <td>
+                    {p.status === "paid" ? (
+                      <Link className="btn btn-ghost btn-sm" to={`/payment/success/${encodeURIComponent(p.id)}`}>
+                        View / download
+                      </Link>
+                    ) : "—"}
                   </td>
                 </tr>
               ))}

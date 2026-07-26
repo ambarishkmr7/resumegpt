@@ -484,6 +484,9 @@ class UserProfileOut(BaseModel):
     profile_photo_key: Optional[str] = None
     profile_completion: int = 0
     updated_at: Optional[datetime] = None
+    # True when blanks were filled in from the user's latest resume and are not
+    # persisted yet — the profile screen asks the user to review and save.
+    prefilled_from_resume: bool = False
 
     class Config:
         from_attributes = True

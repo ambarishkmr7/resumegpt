@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { api, BASE } from "../api/client";
@@ -7,6 +7,59 @@ import Footer from "../components/Footer.jsx";
 import { SkeletonBlock, SkeletonLine, SkeletonCircle, SkeletonButton } from "../components/Skeleton.jsx";
 
 /* ─── Helpers ─── */
+/**
+ * Profile completion, computed from what's currently on screen.
+ *
+ * The server also computes this, but only from the *saved* profile. This page
+ * pre-fills the form from the user's latest resume before anything is saved, so
+ * a server-sourced number would sit at the old value while every field on screen
+ * is populated — which reads as "the score is broken". Mirrors
+ * backend/app/profile/router.py::_compute_completion; keep the two in step.
+ */
+function filledRatio(fields, data, listField = null) {
+  if (!fields.length) return 0;
+  let filled = 0;
+  for (const f of fields) {
+    const val = data?.[f];
+    if (listField && f === listField) {
+      if (Array.isArray(val) && val.some((v) => String(v ?? "").trim())) filled += 1;
+    } else if (String(val ?? "").trim()) {
+      filled += 1;
+    }
+  }
+  return filled / fields.length;
+}
+
+export function computeCompletion({ personal, education, experience, skills, preferences }) {
+  let score = 0;
+
+  score += Math.trunc(filledRatio(
+    ["full_name", "phone", "location", "linkedin_url", "headline", "summary"], personal || {},
+  ) * 20);
+
+  const edu = education || [];
+  if (edu.length) {
+    score += 10;
+    score += Math.trunc(filledRatio(["degree", "school"], edu[0] || {}) * 10);
+  }
+
+  const exp = experience || [];
+  if (exp.length) {
+    score += 10;
+    score += Math.trunc(filledRatio(["title", "company"], exp[0] || {}) * 10);
+  }
+
+  const skillCount = (skills || []).filter((s) => String(s ?? "").trim()).length;
+  score += Math.min(Math.trunc((skillCount / 3) * 20), 20);
+
+  score += Math.trunc(filledRatio(
+    ["desired_role", "preferred_locations", "job_type", "remote_preference"],
+    preferences || {}, "preferred_locations",
+  ) * 20);
+
+  return Math.min(score, 100);
+}
+
 function pctColor(pct) {
   if (pct >= 70) return "var(--good)";
   if (pct >= 40) return "var(--warn)";
@@ -108,7 +161,6 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  const [pct, setPct] = useState(0);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -171,50 +223,31 @@ export default function ProfilePage() {
           ? resumes.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0]
           : null;
         const rc = latest?.content || null;
-        const c = rc?.contact || {};
-        if (rc) setLatestResumeContent(rc);
+        if (rc) setLatestResumeContent(rc);  // powers the "Fill from Resume" button
 
-        // Merge: profile data takes priority; resume fills empty fields
+        // The server already merged the latest resume into any blank fields and
+        // scored the result, so the dashboard and this page can't disagree.
+        // Doing that merge here as well is what made them drift apart.
         const p = data.personal || {};
-        let autoFilled = false;
-        const fill = (profileVal, resumeVal, setter) => {
-          if (profileVal) { setter(profileVal); }
-          else if (resumeVal) { setter(resumeVal); autoFilled = true; }
-        };
-
-        fill(p.full_name, c.name, setFullName);
+        setFullName(p.full_name || "");
         setEmail(p.email || "");
-        fill(p.phone, c.phone, setPhone);
-        fill(p.location, c.location, setLocation);
-        fill(p.linkedin_url, c.linkedin, setLinkedinUrl);
-        fill(p.headline, c.title, setHeadline);
-        fill(p.summary, rc?.summary, setSummary);
-
-        const profileEdu = data.education || [];
-        const resumeEdu = mapResumeEdu(rc?.education || []);
-        if (profileEdu.length > 0) { setEducation(profileEdu); }
-        else if (resumeEdu.length > 0) { setEducation(resumeEdu); autoFilled = true; }
-
-        const profileExp = data.experience || [];
-        const resumeExp = mapResumeExp(rc?.experience || []);
-        if (profileExp.length > 0) { setExperience(profileExp); }
-        else if (resumeExp.length > 0) { setExperience(resumeExp); autoFilled = true; }
-
-        const profileSkills = data.skills || [];
-        const resumeSkills = rc?.skills || [];
-        if (profileSkills.length > 0) { setSkills(profileSkills); }
-        else if (resumeSkills.length > 0) { setSkills(resumeSkills); autoFilled = true; }
-
-        if (autoFilled) setAutoFilledFromResume(true);
+        setPhone(p.phone || "");
+        setLocation(p.location || "");
+        setLinkedinUrl(p.linkedin_url || "");
+        setHeadline(p.headline || "");
+        setSummary(p.summary || "");
+        setEducation(data.education || []);
+        setExperience(data.experience || []);
+        setSkills(data.skills || []);
+        setAutoFilledFromResume(!!data.prefilled_from_resume);
 
         const pr = data.preferences || {};
-        setDesiredRole(pr.desired_role || c.title || "");
+        setDesiredRole(pr.desired_role || "");
         setPrefLocations(pr.preferred_locations || []);
         setSalaryMin(pr.expected_salary_min || "");
         setSalaryMax(pr.expected_salary_max || "");
         setJobType(pr.job_type || "");
         setRemotePref(pr.remote_preference || "");
-        setPct(data.profile_completion || 0);
 
         if (data.profile_photo_key) {
           setPhotoPreview(`${BASE}/api/profile/photo?key=${data.profile_photo_key}`);
@@ -285,14 +318,21 @@ export default function ProfilePage() {
     },
   });
 
+  // Track the form, not the last server response, so resume-prefilled fields and
+  // every keystroke move the meter immediately.
+  const pct = useMemo(() => computeCompletion(buildPayload()), [
+    fullName, email, phone, location, linkedinUrl, headline, summary,
+    education, experience, skills,
+    desiredRole, prefLocations, salaryMin, salaryMax, jobType, remotePref,
+  ]);
+
   const { refreshProfilePhoto } = useAuth();
 
   const save = useCallback(async () => {
     setSaving(true);
     setSaveMsg("");
     try {
-      const data = await api.updateProfile(buildPayload());
-      setPct(data.profile_completion || 0);
+      await api.updateProfile(buildPayload());
       setSaveMsg("✅ Profile saved successfully!");
       if (photoFile) {
         await api.uploadProfilePhoto(photoFile);

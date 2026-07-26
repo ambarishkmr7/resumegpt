@@ -16,6 +16,15 @@ TOKENS_PER_RUPEE = 2000
 
 # slug, name, price_inr, minutes, monthly_tokens, features, badge, default, order
 DEFAULT_PLANS = [
+    # The free tier is a real Plan row (price 0) so admins edit its name, blurb
+    # and feature list like any other — nothing about it is hardcoded in the UI.
+    # Its allowances stay 0: free usage comes from the trial settings
+    # (free_trial_interview_seconds / free_trial_tokens), not from a cycle grant.
+    ("free", "Free", 0, 0, 0,
+     ["Create & edit unlimited resumes", "30 professional templates",
+      "ATS scoring & suggestions", "AI career analysis & roadmap",
+      "AI resume rewriting & cover letters", "Free trial interview minutes"],
+     None, False, 0),
     ("starter", "Starter", 500, 60, 1_000_000,
      ["60 mock-interview minutes / month", "1M AI tokens / month",
       "AI scoring & gap analysis",
@@ -55,7 +64,8 @@ def seed_billing(db: Session) -> None:
                 allowances={"interview_seconds": minutes * 60, "llm_tokens": tokens},
                 features=features,
                 badge=badge, is_active=True, is_default=is_default, display_order=order,
-                description=f"{minutes} interview minutes every month.",
+                description=(f"{minutes} interview minutes every month." if price > 0
+                             else "Everything you need to build a resume, free forever."),
             ))
 
     # ── Backfill: existing plans created before token metering get an allowance ──

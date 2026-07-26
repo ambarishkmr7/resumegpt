@@ -7,6 +7,7 @@ const FALLBACK_CAP = 60 * 60; // default per-session ceiling (backend enforces t
 const IN_RATE = 16000;       // mic capture + AudioContext rate (Gemini input)
 const OUT_RATE = 24000;      // Gemini output audio rate
 const MIC_FLUSH_SAMPLES = 1600; // ~100ms batches to Gemini
+const MAX_DRAIN_MS = 10000;  // longest we'll wait for queued AI audio to finish
 
 // ---- audio helpers ----------------------------------------------------------
 
@@ -154,6 +155,7 @@ export default function MockInterview() {
   const [elapsed, setElapsed] = useState(0);
   const [muted, setMuted] = useState(false);
   const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [ending, setEnding] = useState(false);   // session closed, report on its way
 
   const [sessions, setSessions] = useState(null);
   const [activeReport, setActiveReport] = useState(null); // {report, audioUrl, durationSeconds}
@@ -178,6 +180,9 @@ export default function MockInterview() {
   const pendingSessionRef = useRef(null);
   const objectUrlsRef = useRef([]);
   const endedRef = useRef(false); // true once End was requested or a report arrived
+  const finalizedRef = useRef(false); // server gave a final outcome (report or error)
+  const drainTimerRef = useRef(null);
+  const playAtRef = useRef(0);    // AudioContext time when queued AI audio runs dry
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
 
@@ -198,18 +203,44 @@ export default function MockInterview() {
 
   useEffect(() => { loadSessions(); loadUsage(); }, [loadSessions, loadUsage]);
 
-  const cleanup = useCallback(() => {
+  const stopTimer = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }, []);
+
+  // Stop capturing (clock, recorder, socket, mic) but leave the output context
+  // alive so audio the AI has already streamed can still play out.
+  const stopCapture = useCallback(() => {
+    stopTimer();
     if (aiTimeoutRef.current) { clearTimeout(aiTimeoutRef.current); aiTimeoutRef.current = null; }
     try { recorderRef.current && recorderRef.current.state !== "inactive" && recorderRef.current.stop(); } catch (_) {}
     try { wsRef.current && wsRef.current.close(); } catch (_) {}
     wsRef.current = null;
     try { streamRef.current && streamRef.current.getTracks().forEach(t => t.stop()); } catch (_) {}
     streamRef.current = null;
+  }, [stopTimer]);
+
+  const closeAudio = useCallback(() => {
+    if (drainTimerRef.current) { clearTimeout(drainTimerRef.current); drainTimerRef.current = null; }
     try { ctxRef.current && ctxRef.current.state !== "closed" && ctxRef.current.close(); } catch (_) {}
     ctxRef.current = null;
     playerRef.current = null;
+    playAtRef.current = 0;
   }, []);
+
+  const cleanup = useCallback(() => { stopCapture(); closeAudio(); }, [stopCapture, closeAudio]);
+
+  // Closing the context instantly would cut the interviewer off mid-goodbye, so
+  // hold it open until the audio already queued in the player worklet drains.
+  const closeAudioAfterPlayback = useCallback(() => {
+    const ctx = ctxRef.current;
+    const remainingMs = ctx ? Math.max(0, playAtRef.current - ctx.currentTime) * 1000 : 0;
+    if (remainingMs <= 0) { closeAudio(); return; }
+    if (drainTimerRef.current) clearTimeout(drainTimerRef.current);
+    drainTimerRef.current = setTimeout(() => {
+      drainTimerRef.current = null;
+      closeAudio();
+    }, Math.min(remainingMs + 150, MAX_DRAIN_MS));
+  }, [closeAudio]);
 
   // Cleanup on unmount
   useEffect(() => () => {
@@ -231,6 +262,7 @@ export default function MockInterview() {
 
   const handleReport = useCallback((data) => {
     endedRef.current = true;
+    finalizedRef.current = true;
     pendingSessionRef.current = data?.session_id || null;
     const report = data?.report || null;
     const durationSeconds = data?.duration_seconds ?? elapsed;
@@ -238,7 +270,8 @@ export default function MockInterview() {
     const finish = (audioUrl) => {
       setActiveReport({ report, audioUrl, durationSeconds });
       setView("report");
-      cleanup();
+      stopCapture();
+      closeAudioAfterPlayback();
       loadSessions();
     };
     const rec = recorderRef.current;
@@ -261,10 +294,15 @@ export default function MockInterview() {
     } else {
       finish(null);
     }
-  }, [cleanup, elapsed, loadSessions]);
+  }, [stopCapture, closeAudioAfterPlayback, elapsed, loadSessions]);
 
   const endInterview = useCallback(() => {
+    if (endedRef.current) return; // already ending — don't send a second "end"
     endedRef.current = true;
+    // The session is over the moment End is pressed: freeze the clock instead of
+    // letting it tick through report generation.
+    stopTimer();
+    setEnding(true);
     setStatus("Generating your report…");
     const ws = wsRef.current;
     flushMic();
@@ -275,7 +313,7 @@ export default function MockInterview() {
       cleanup();
       setView("home");
     }
-  }, [cleanup]);
+  }, [cleanup, stopTimer]);
 
   const startInterview = useCallback(async () => {
     // Refresh the balance and block if the user is out of minutes.
@@ -286,8 +324,9 @@ export default function MockInterview() {
       const cap = Math.min(u.available_seconds || 0, FALLBACK_CAP) || FALLBACK_CAP;
       capRef.current = cap; setCapSeconds(cap);
     } catch { /* fall through — backend still enforces the cap */ }
-    setError(""); setActiveReport(null); setElapsed(0); setMuted(false);
-    endedRef.current = false; pendingSessionRef.current = null;
+    setError(""); setActiveReport(null); setElapsed(0); setMuted(false); setEnding(false);
+    endedRef.current = false; finalizedRef.current = false;
+    pendingSessionRef.current = null; playAtRef.current = 0;
     setStatus("Requesting microphone…"); setView("live");
     let stream;
     try {
@@ -366,19 +405,49 @@ export default function MockInterview() {
           for (let i = 0; i < int16.length; i++) f[i] = int16[i] / 32768;
           const resampled = resampleToContext(f, OUT_RATE, IN_RATE);
           playerRef.current && playerRef.current.port.postMessage(resampled);
+          const actx = ctxRef.current;
+          if (actx) {
+            // Track when the queued audio will run dry — Gemini streams faster
+            // than realtime, so "last frame received" is not "done speaking".
+            playAtRef.current = Math.max(playAtRef.current, actx.currentTime)
+              + resampled.length / (actx.sampleRate || IN_RATE);
+          }
           setAiSpeaking(true);
-          setStatus("AI speaking…");
+          // Once the session is closing, leave the "generating your report" line
+          // in place instead of flipping back to the live status.
+          if (!endedRef.current) setStatus("AI speaking…");
           if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
-          aiTimeoutRef.current = setTimeout(() => { setAiSpeaking(false); setStatus("Listening…"); }, 500);
+          aiTimeoutRef.current = setTimeout(() => {
+            setAiSpeaking(false);
+            if (!endedRef.current) setStatus("Listening…");
+          }, 500);
         } else if (msg.type === "interrupted") {
           playerRef.current && playerRef.current.port.postMessage("flush");
-          setAiSpeaking(false); setStatus("Listening…");
+          playAtRef.current = 0;
+          setAiSpeaking(false);
+          if (!endedRef.current) setStatus("Listening…");
         } else if (msg.type === "status") {
-          if (msg.state === "connected") setStatus("Listening…");
-          if (msg.state === "time_up") setStatus("Time's up — wrapping up…");
+          if (msg.state === "connected" || msg.state === "reconnected") setStatus("Listening…");
+          if (msg.state === "reconnecting") setStatus("Reconnecting…");
+          if (msg.state === "time_up" || msg.state === "wrapping_up") {
+            // The server is closing the session (time budget spent, or the
+            // interviewer wrapped up on its own). Stop the clock and treat the
+            // upcoming socket close as expected, not as a dropped connection.
+            endedRef.current = true;
+            stopTimer();
+            setEnding(true);
+            setStatus(msg.state === "time_up"
+              ? "Time's up — generating your report…"
+              : "Wrapping up — generating your report…");
+          }
         } else if (msg.type === "report") {
           handleReport(msg.data);
         } else if (msg.type === "error") {
+          // The server explained why it's stopping, and the socket close that
+          // follows shouldn't overwrite that message with a generic one.
+          endedRef.current = true;
+          finalizedRef.current = true;
+          stopTimer();
           if (msg.code === "usage_exhausted") {
             cleanup();
             setView("home");
@@ -395,13 +464,22 @@ export default function MockInterview() {
 
       ws.onerror = () => { if (!endedRef.current) setError("Connection error. Please try again."); };
       ws.onclose = () => {
-        // Unexpected drop before the interview was ended / a report arrived.
-        if (!endedRef.current) {
-          setError("The interview connection dropped. Your progress up to this point may not have been saved.");
-          cleanup();
-          setView("home");
-          loadSessions();
+        if (endedRef.current) {
+          // Ended on purpose. The one bad case is the socket closing before the
+          // report arrived — don't leave the user on a dead "generating…" screen.
+          if (!finalizedRef.current) {
+            setError("The interview ended, but the report didn't come through. Check Previous Interviews — the session may still have been saved.");
+            cleanup();
+            setView("home");
+            loadSessions();
+          }
+          return;
         }
+        // Unexpected drop before the interview was ended / a report arrived.
+        setError("The interview connection dropped. Your progress up to this point may not have been saved.");
+        cleanup();
+        setView("home");
+        loadSessions();
       };
     } catch (err) {
       setError("Could not start audio: " + (err?.message || err));
@@ -409,7 +487,7 @@ export default function MockInterview() {
       setView("home");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, endInterview, handleReport, cleanup, loadUsage]);
+  }, [id, endInterview, handleReport, cleanup, stopTimer, loadUsage]);
 
   const openSession = async (row) => {
     try {
@@ -516,12 +594,18 @@ export default function MockInterview() {
           <div className="mi-status">{status || "Connecting…"}</div>
           <div className="mi-timer">{fmtTime(elapsed)} <span className="mi-timer-max">/ {fmtTime(capSeconds)}</span></div>
           <div className="mi-controls">
-            <button className={`btn ${muted ? "btn-primary" : "btn-ghost"}`} onClick={() => setMuted(m => !m)}>
+            <button className={`btn ${muted ? "btn-primary" : "btn-ghost"}`} onClick={() => setMuted(m => !m)} disabled={ending}>
               {muted ? "🔇 Unmute" : "🎤 Mute"}
             </button>
-            <button className="btn btn-danger mi-end" onClick={endInterview}>End Interview</button>
+            <button className="btn btn-danger mi-end" onClick={endInterview} disabled={ending}>
+              {ending ? "Ending…" : "End Interview"}
+            </button>
           </div>
-          <div className="mi-tip">Speak naturally. The AI will follow up on your answers — go into detail.</div>
+          <div className="mi-tip">
+            {ending
+              ? "Scoring your answers — this takes a few seconds."
+              : "Speak naturally. The AI will follow up on your answers — go into detail. Say \"let's wrap up\" whenever you want to finish."}
+          </div>
         </div>
       )}
 

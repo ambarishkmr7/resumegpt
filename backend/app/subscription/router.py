@@ -15,12 +15,14 @@ checkout, and the Razorpay webhook (app/subscription/webhook.py).
 import hashlib
 import hmac
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -29,6 +31,7 @@ from app.core.deps import get_current_user
 from app.database import get_db
 from app.models import Coupon, Payment, Plan, RefillPack, Subscription, User
 from app.subscription import coupons as coupon_svc
+from app.subscription import invoice as invoice_svc
 from app.subscription import usage as usage_svc
 
 logger = logging.getLogger(__name__)
@@ -146,6 +149,8 @@ def _plan_public(p: Plan) -> dict:
         "features": p.features or [],
         "badge": p.badge, "is_default": p.is_default,
         "recurring": bool(p.razorpay_plan_id),
+        # A ₹0 tier is the free plan: shown in the pricing grid, never purchasable.
+        "is_free": (p.price_inr or 0) <= 0,
     }
 
 
@@ -190,6 +195,10 @@ class SubscriptionStatus(BaseModel):
     razorpay_key_id: str = ""
     usage: Optional[dict] = None
     used_freepass: bool = False
+    # ── Auto-payment (recurring mandate) ──
+    auto_pay: bool = False            # a live mandate will charge the next cycle
+    auto_pay_available: bool = False  # this plan *can* run on auto-pay
+    cancel_at_period_end: bool = False
 
 
 def _used_freepass(db: Session, user_id: str) -> bool:
@@ -203,6 +212,13 @@ def _used_freepass(db: Session, user_id: str) -> bool:
         Coupon.discount_type == "percent",
         Coupon.discount_value >= 100,
     ).first() is not None
+
+
+def _auto_pay_on(sub: Subscription) -> bool:
+    """Auto-pay is on only when a Razorpay mandate exists *and* it hasn't been
+    told to stop at the end of this cycle. A plan bought as a one-time order has
+    no mandate, so it is always off."""
+    return bool(sub.razorpay_subscription_id) and not sub.cancel_at_period_end
 
 
 def _status_payload(db: Session, user: User) -> SubscriptionStatus:
@@ -219,6 +235,9 @@ def _status_payload(db: Session, user: User) -> SubscriptionStatus:
             current_period_end=sub.current_period_end.isoformat() if sub.current_period_end else None,
             created_at=sub.created_at.isoformat() if sub.created_at else None,
             razorpay_key_id=settings.RAZORPAY_KEY_ID, usage=usage, used_freepass=freepass,
+            auto_pay=_auto_pay_on(sub),
+            auto_pay_available=bool(plan and plan.razorpay_plan_id and _razorpay_live()),
+            cancel_at_period_end=bool(sub.cancel_at_period_end),
         )
     return SubscriptionStatus(is_subscribed=False, razorpay_key_id=settings.RAZORPAY_KEY_ID,
                               usage=usage, used_freepass=freepass)
@@ -266,6 +285,14 @@ def _base_price(db: Session, kind: str, target_id: str) -> int:
         raise HTTPException(status_code=400, detail="Invalid purchase kind")
     if not obj:
         raise HTTPException(status_code=404, detail=f"{kind.title()} not found or inactive")
+    if (obj.price_inr or 0) <= 0:
+        # The ₹0 tier is the free plan. Without this it would fall through the
+        # "free after coupon" branch below and hand out a real *subscription*
+        # record — making a free user read as subscribed everywhere.
+        raise HTTPException(
+            status_code=400,
+            detail="This is the free plan — there's nothing to pay for. It's already available to you.",
+        )
     return obj.price_inr
 
 
@@ -287,6 +314,7 @@ class CreateOrderResponse(BaseModel):
     discount_inr: int
     final_inr: int
     free: bool = False            # True ⇒ activated immediately (₹0 after coupon)
+    payment_ref: Optional[str] = None  # our Payment.id — key for the success page/invoice
 
 
 def _active_sub_or_none(db: Session, user_id: str):
@@ -342,10 +370,12 @@ def create_order(payload: CreateOrderRequest,
         db.add(payment)
         _fulfil_payment(db, payment)
         db.commit()
+        db.refresh(payment)
         logger.info("Free activation (₹0 via coupon) — user=%s kind=%s coupon=%s",
                     user.id, payload.kind, coupon.code if coupon else None)
         return CreateOrderResponse(amount=0, kind=payload.kind, base_inr=base,
-                                   discount_inr=discount, final_inr=0, free=True)
+                                   discount_inr=discount, final_inr=0, free=True,
+                                   payment_ref=payment.id)
 
     # ── Paid: a real Razorpay gateway is required. No silent bypass.
     if not _razorpay_live():
@@ -380,7 +410,8 @@ def create_order(payload: CreateOrderRequest,
     logger.info("Order created: %s (user=%s, kind=%s, ₹%s)", order["id"], user.id, payload.kind, final)
     return CreateOrderResponse(order_id=order["id"], amount=final * 100,
                                razorpay_key_id=settings.RAZORPAY_KEY_ID, kind=payload.kind,
-                               base_inr=base, discount_inr=discount, final_inr=final)
+                               base_inr=base, discount_inr=discount, final_inr=final,
+                               payment_ref=payment.id)
 
 
 def _slug_for(db: Session, kind: str, target_id: str) -> str:
@@ -403,50 +434,173 @@ class CreateSubscriptionResponse(BaseModel):
     plan_id: str
     amount: int          # paise (first charge)
     demo: bool = False
+    payment_ref: Optional[str] = None  # our Payment.id — key for the success page/invoice
 
 
-@router.post("/create-subscription", response_model=CreateSubscriptionResponse)
-def create_subscription(payload: CreateSubscriptionRequest,
-                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    plan = db.query(Plan).filter(Plan.id == payload.plan_id, Plan.is_active == True).first()  # noqa: E712
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found or inactive")
-    _reject_duplicate_plan_purchase(db, user.id, plan.id)
-
-    # Recurring auto-charge requires live Razorpay keys + a razorpay_plan_id on
-    # the plan. No silent bypass — callers should use the one-time order flow
-    # (create-order) with a coupon, or ask an admin to grant the plan.
+def _require_recurring_plan(plan: Plan) -> None:
+    """Recurring auto-charge requires live Razorpay keys + a razorpay_plan_id on
+    the plan. No silent bypass — callers should use the one-time order flow
+    (create-order) with a coupon, or ask an admin to grant the plan."""
     if not _razorpay_live() or not plan.razorpay_plan_id:
         raise HTTPException(
             status_code=503,
-            detail=("Recurring billing isn't configured for this plan. Use the one-time "
-                    "checkout (with a coupon if testing), or ask an admin to grant access."),
+            detail=("Auto-payment isn't configured for this plan. Pay once now, or ask an "
+                    "admin to link a Razorpay plan id so recurring billing can be enabled."),
         )
+
+
+def _open_mandate(db: Session, user: User, plan: Plan, start_at: datetime | None,
+                  payment_type: str) -> tuple[dict, Payment]:
+    """Create a Razorpay subscription (auto-debit mandate) + the local Payment row.
+
+    ``start_at`` in the future defers the first charge to that moment — used when
+    a user turns auto-pay on mid-cycle, so the period they already paid for isn't
+    billed twice. Checkout still collects a mandate authorisation.
+    """
+    _require_recurring_plan(plan)
+    body = {
+        "plan_id": plan.razorpay_plan_id,
+        "total_count": 120,
+        "customer_notify": 1,
+        "notes": {"user_id": user.id, "plan_id": plan.id, "email": user.email,
+                  "purpose": payment_type},
+    }
+    if start_at and start_at > datetime.utcnow():
+        # Period ends are stored as naive UTC. datetime.timestamp() would read a
+        # naive value as *local* time, which on an IST server starts the mandate
+        # 5.5 hours early — i.e. charges inside the period already paid for.
+        body["start_at"] = int(start_at.replace(tzinfo=timezone.utc).timestamp())
 
     try:
         resp = httpx.post(
             "https://api.razorpay.com/v1/subscriptions",
             auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET),
-            json={"plan_id": plan.razorpay_plan_id, "total_count": 120,
-                  "customer_notify": 1,
-                  "notes": {"user_id": user.id, "plan_id": plan.id, "email": user.email}},
-            timeout=15,
+            json=body, timeout=15,
         )
         resp.raise_for_status()
         sub = resp.json()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Razorpay subscription creation failed: {str(e)}")
 
-    payment = Payment(user_id=user.id, type="subscription", plan_id=plan.id, plan=plan.slug,
-                      razorpay_subscription_id=sub["id"], base_amount_inr=plan.price_inr,
-                      amount=plan.price_inr, status="created")
+    # A deferred mandate charges nothing today, so the Payment row records ₹0 —
+    # the real charge arrives later as a subscription.charged webhook.
+    charged_now = 0 if body.get("start_at") else plan.price_inr
+    payment = Payment(user_id=user.id, type=payment_type, plan_id=plan.id, plan=plan.slug,
+                      razorpay_subscription_id=sub["id"], base_amount_inr=charged_now,
+                      amount=charged_now, status="created")
     db.add(payment)
     db.commit()
     db.refresh(payment)
     schedule_payment_expiry(payment.id)  # auto-fail in 30 min if checkout is abandoned
-    logger.info("Razorpay subscription created: %s (user=%s, plan=%s)", sub["id"], user.id, plan.slug)
+    logger.info("Razorpay mandate created: %s (user=%s, plan=%s, purpose=%s, start_at=%s)",
+                sub["id"], user.id, plan.slug, payment_type, body.get("start_at"))
+    return sub, payment
+
+
+@router.post("/create-subscription", response_model=CreateSubscriptionResponse)
+def create_subscription(payload: CreateSubscriptionRequest,
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Buy a plan *with* auto-payment — charges the first cycle now and leaves a
+    mandate in place for subsequent months."""
+    plan = db.query(Plan).filter(Plan.id == payload.plan_id, Plan.is_active == True).first()  # noqa: E712
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found or inactive")
+    if (plan.price_inr or 0) <= 0:
+        raise HTTPException(status_code=400, detail="The free plan can't be put on auto-payment.")
+    _reject_duplicate_plan_purchase(db, user.id, plan.id)
+
+    sub, payment = _open_mandate(db, user, plan, start_at=None, payment_type="subscription")
     return CreateSubscriptionResponse(subscription_id=sub["id"], razorpay_key_id=settings.RAZORPAY_KEY_ID,
-                                      plan_id=plan.id, amount=plan.price_inr * 100)
+                                      plan_id=plan.id, amount=plan.price_inr * 100,
+                                      payment_ref=payment.id)
+
+
+# ── Auto-payment toggle ───────────────────────────────────────────────────────
+
+class AutoPayRequest(BaseModel):
+    enabled: bool
+
+
+class AutoPayResponse(BaseModel):
+    auto_pay: bool
+    message: str
+    # Set when switching auto-pay ON needs a fresh mandate authorisation: the
+    # client must run Razorpay Checkout with these and then call verify-payment.
+    requires_checkout: bool = False
+    subscription_id: Optional[str] = None
+    razorpay_key_id: str = ""
+    payment_ref: Optional[str] = None
+    charges_now: int = 0        # rupees taken at checkout (0 for a deferred mandate)
+
+
+def _cancel_mandate_at_cycle_end(sub: Subscription) -> None:
+    """Tell Razorpay to stop after the cycle the user already paid for."""
+    if not (sub.razorpay_subscription_id and _razorpay_live()):
+        return
+    try:
+        resp = httpx.post(
+            f"https://api.razorpay.com/v1/subscriptions/{sub.razorpay_subscription_id}/cancel",
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET),
+            json={"cancel_at_cycle_end": 1}, timeout=15,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        # Never report auto-pay as off while Razorpay still holds a live mandate —
+        # that would silently charge the user next month.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not turn auto-payment off at the payment gateway: {e}. "
+                   "Nothing was changed — please try again.",
+        )
+
+
+@router.post("/auto-pay", response_model=AutoPayResponse)
+def set_auto_pay(payload: AutoPayRequest,
+                 user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Turn the recurring mandate on or off for the active plan.
+
+    Off is immediate and safe: the mandate is cancelled at cycle end, so access
+    the user already paid for is untouched. On needs a new authorisation —
+    Razorpay has no 'resume', a cancelled mandate can only be replaced.
+    """
+    sub = _active_sub_or_none(db, user.id)
+    if not sub:
+        raise HTTPException(status_code=409, detail="You don't have an active plan to put on auto-payment.")
+
+    if not payload.enabled:
+        if not _auto_pay_on(sub):
+            return AutoPayResponse(auto_pay=False, message="Auto-payment is already off.")
+        _cancel_mandate_at_cycle_end(sub)
+        sub.cancel_at_period_end = True
+        db.commit()
+        until = sub.current_period_end.strftime("%d %b %Y") if sub.current_period_end else "the end of this cycle"
+        logger.info("Auto-pay disabled (user=%s, sub=%s)", user.id, sub.razorpay_subscription_id)
+        return AutoPayResponse(
+            auto_pay=False,
+            message=f"Auto-payment is off. Your plan stays active until {until}, "
+                    "and you won't be charged again.",
+        )
+
+    if _auto_pay_on(sub):
+        return AutoPayResponse(auto_pay=True, message="Auto-payment is already on.")
+
+    plan = db.query(Plan).filter(Plan.id == sub.plan_id).first() if sub.plan_id else None
+    if not plan:
+        raise HTTPException(status_code=409, detail="Your current plan is no longer available for auto-payment.")
+    _require_recurring_plan(plan)
+
+    # Defer the first auto-charge to the end of the period already paid for.
+    rzp_sub, payment = _open_mandate(db, user, plan, start_at=sub.current_period_end,
+                                     payment_type="mandate")
+    return AutoPayResponse(
+        auto_pay=False,  # not on until the mandate is authorised at checkout
+        message="Approve the auto-payment mandate to finish turning it on.",
+        requires_checkout=True,
+        subscription_id=rzp_sub["id"],
+        razorpay_key_id=settings.RAZORPAY_KEY_ID,
+        payment_ref=payment.id,
+        charges_now=payment.amount or 0,
+    )
 
 
 # ── Verify payment (checkout callback for orders + subscriptions) ─────────────
@@ -504,6 +658,29 @@ def verify_payment(payload: VerifyPaymentRequest,
 
 # ── Fulfilment (shared by verify-payment, free activation, and the webhook) ───
 
+def _cancel_mandate_best_effort(razorpay_subscription_id: str, user_id: str) -> None:
+    """Cancel a mandate we're about to stop tracking. Best-effort on purpose:
+    this runs inside fulfilment of a payment the customer already made, so a
+    gateway hiccup must not block their new plan from activating. Failures are
+    logged loudly because they mean a live mandate is still out there."""
+    if not _razorpay_live():
+        return
+    try:
+        resp = httpx.post(
+            f"https://api.razorpay.com/v1/subscriptions/{razorpay_subscription_id}/cancel",
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET),
+            json={"cancel_at_cycle_end": 0}, timeout=15,
+        )
+        resp.raise_for_status()
+        logger.info("Cancelled superseded mandate %s (user=%s)", razorpay_subscription_id, user_id)
+    except Exception:
+        logger.exception(
+            "ORPHANED MANDATE: could not cancel %s for user %s while switching plans — "
+            "this mandate may keep charging the customer; cancel it in the Razorpay dashboard",
+            razorpay_subscription_id, user_id,
+        )
+
+
 def _activate_subscription(db: Session, user_id: str, plan: Plan,
                            payment_id: Optional[str], razorpay_subscription_id: Optional[str]) -> Subscription:
     now = datetime.utcnow()
@@ -511,6 +688,13 @@ def _activate_subscription(db: Session, user_id: str, plan: Plan,
     if not sub:
         sub = Subscription(user_id=user_id)
         db.add(sub)
+    # Switching plans replaces the row, so any mandate the old plan was running
+    # would be orphaned: still live at Razorpay, still charging monthly, but no
+    # longer recorded anywhere we could cancel it from. Stop it first.
+    old_mandate = sub.razorpay_subscription_id
+    if old_mandate and old_mandate != razorpay_subscription_id:
+        _cancel_mandate_best_effort(old_mandate, user_id)
+
     sub.plan = plan.slug
     sub.plan_id = plan.id
     sub.amount = plan.price_inr
@@ -518,6 +702,9 @@ def _activate_subscription(db: Session, user_id: str, plan: Plan,
     sub.status = "active"
     sub.payment_id = payment_id
     sub.razorpay_subscription_id = razorpay_subscription_id
+    # A fresh purchase always re-arms billing: bought with auto-pay ⇒ the mandate
+    # runs; bought as a one-time order ⇒ there's no mandate to stop.
+    sub.cancel_at_period_end = False
     sub.current_period_start = now
     sub.current_period_end = now + relativedelta(months=1)
     db.flush()
@@ -525,11 +712,31 @@ def _activate_subscription(db: Session, user_id: str, plan: Plan,
     return sub
 
 
+def _attach_mandate(db: Session, payment: Payment) -> None:
+    """Auto-pay was switched on mid-cycle: bind the freshly authorised mandate to
+    the existing subscription. Deliberately does *not* touch the billing period
+    or grant a cycle — the user already paid for the period they're in, and the
+    first auto-charge lands at renewal via the subscription.charged webhook."""
+    sub = db.query(Subscription).filter(Subscription.user_id == payment.user_id).first()
+    if not sub:
+        logger.warning("Mandate %s authorised with no subscription to attach (user=%s)",
+                       payment.razorpay_subscription_id, payment.user_id)
+        return
+    sub.razorpay_subscription_id = payment.razorpay_subscription_id
+    sub.cancel_at_period_end = False
+    db.flush()
+    logger.info("Auto-pay enabled via mandate %s (user=%s)",
+                payment.razorpay_subscription_id, payment.user_id)
+
+
 def _fulfil_payment(db: Session, payment: Payment) -> None:
     """Grant what the (paid) payment bought. Idempotent-ish: safe to re-run for
     subscriptions; refills are guarded by the caller (webhook dedupe / one call
     per verify)."""
     user_id = payment.user_id
+    if payment.type == "mandate":
+        _attach_mandate(db, payment)
+        return
     if payment.type == "refill":
         pack = db.query(RefillPack).filter(RefillPack.id == payment.refill_pack_id).first()
         if pack:
@@ -639,6 +846,67 @@ def dashboard_nudges(user: User = Depends(get_current_user), db: Session = Depen
         "recharge_reason": reason,
         "loyalty_coupon": _loyalty_coupon(db, user),
     }
+
+
+def _find_user_payment(db: Session, user_id: str, ref: str) -> Payment:
+    """Look a payment up by our own id, the Razorpay order id, or the Razorpay
+    payment id — the success page only has whatever Checkout handed back."""
+    payment = db.query(Payment).filter(
+        Payment.user_id == user_id,
+        or_(Payment.id == ref,
+            Payment.razorpay_order_id == ref,
+            Payment.razorpay_payment_id == ref),
+    ).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return payment
+
+
+def _receipt_payload(db: Session, payment: Payment) -> dict:
+    plan_name = None
+    if payment.plan_id:
+        plan = db.query(Plan).filter(Plan.id == payment.plan_id).first()
+        plan_name = plan.name if plan else None
+    elif payment.refill_pack_id:
+        pack = db.query(RefillPack).filter(RefillPack.id == payment.refill_pack_id).first()
+        plan_name = pack.name if pack else None
+    return {
+        "id": payment.id,
+        "invoice_no": invoice_svc.invoice_number(payment),
+        "type": payment.type,
+        "plan": payment.plan,
+        "plan_name": plan_name or payment.plan,
+        "amount": payment.amount,
+        "base_amount_inr": payment.base_amount_inr or payment.amount,
+        "discount_inr": payment.discount_inr or 0,
+        "coupon_code": payment.coupon_code,
+        "currency": payment.currency or "INR",
+        "status": payment.status,
+        "order_id": payment.razorpay_order_id,
+        "payment_id": payment.razorpay_payment_id,
+        "subscription_id": payment.razorpay_subscription_id,
+        "created_at": payment.created_at.isoformat() if payment.created_at else None,
+    }
+
+
+@router.get("/payments/{ref}/receipt")
+def payment_receipt(ref: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Details for the in-app payment-success page."""
+    return _receipt_payload(db, _find_user_payment(db, user.id, ref))
+
+
+@router.get("/payments/{ref}/invoice")
+def payment_invoice(ref: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Downloadable PDF invoice. Only issued once the payment actually cleared."""
+    payment = _find_user_payment(db, user.id, ref)
+    if payment.status != "paid":
+        raise HTTPException(status_code=409, detail="Invoice is available only for completed payments")
+    pdf = invoice_svc.build_invoice_pdf(db, payment, user)
+    filename = f"invoice-{invoice_svc.invoice_number(payment)}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/payments")

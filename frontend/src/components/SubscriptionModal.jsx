@@ -1,23 +1,16 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-
-async function ensureRazorpay() {
-  if (window.Razorpay) return;
-  await new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = resolve;
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
+import { ensureRazorpay } from "../utils/razorpay";
 
 export default function SubscriptionModal({ onClose, onSuccess, initialTab = "plans" }) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState(initialTab);
   const [plans, setPlans] = useState([]);
   const [refills, setRefills] = useState([]);
   const [selected, setSelected] = useState(null); // { kind, id }
   const [currentPlanSlug, setCurrentPlanSlug] = useState(null); // active subscription's plan
+  const [autoPay, setAutoPay] = useState(false); // opt-in recurring mandate (plans only)
   const [coupon, setCoupon] = useState("");
   const [couponInfo, setCouponInfo] = useState(null); // { discount_inr, final_inr, code }
   const [couponErr, setCouponErr] = useState("");
@@ -28,7 +21,9 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
   useEffect(() => {
     Promise.all([api.plans(), api.refillPacks(), api.subscriptionStatus().catch(() => null)])
       .then(([p, r, s]) => {
-        const planList = p.plans || [];
+        // The ₹0 tier belongs in the pricing grid, not in a checkout list —
+        // there is nothing to pay for and the server rejects the order anyway.
+        const planList = (p.plans || []).filter((x) => !x.is_free);
         const refillList = r.refill_packs || [];
         setPlans(planList);
         setRefills(refillList);
@@ -53,6 +48,11 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
   const isCurrentPlan = (it) => tab === "plans" && currentPlanSlug && it.slug === currentPlanSlug;
   const selIsCurrent = selItem ? isCurrentPlan(selItem) : false;
 
+  // Auto-pay needs a Razorpay plan id on the plan (admin-configured); refills are
+  // one-time by nature and never recur.
+  const autoPaySupported = tab === "plans" && !!selItem?.recurring;
+  const autoPayOn = autoPaySupported && autoPay;
+
   const pick = (id) => {
     setSelected({ kind: tab === "plans" ? "plan" : "refill", id });
     setCouponInfo(null);
@@ -63,6 +63,7 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
     setTab(t);
     setCouponInfo(null);
     setCouponErr("");
+    if (t !== "plans") setAutoPay(false);
     const list = t === "plans" ? plans : refills;
     if (list.length) {
       // Don't preselect the plan the user already has.
@@ -88,6 +89,15 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
   const basePrice = selItem?.price_inr || 0;
   const finalPrice = couponInfo ? couponInfo.final_inr : basePrice;
 
+  // Every successful purchase ends on the in-app receipt page. onSuccess() still
+  // fires first so the page behind us refreshes its plan/usage state (and drops
+  // any "recharge" nudge) before we navigate away.
+  const finish = (ref) => {
+    onSuccess?.();
+    onClose();
+    if (ref) navigate(`/payment/success/${encodeURIComponent(ref)}`);
+  };
+
   const purchase = async () => {
     if (!selected) return;
     setProcessing(true);
@@ -96,10 +106,11 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
       const couponCode = couponInfo ? couponInfo.code : undefined;
       const plan = tab === "plans" ? selItem : null;
 
-      // Recurring plan with a Razorpay plan id → true subscription flow.
-      if (plan && plan.recurring) {
+      // Auto-payment ticked → set up a Razorpay mandate that charges every cycle.
+      // Unticked → a plain one-time order the user repeats when they choose to.
+      if (plan && autoPayOn) {
         const sub = await api.createSubscription(plan.id);
-        if (sub.demo || sub.razorpay_key_id === "demo_mode") { onSuccess?.(); onClose(); return; }
+        if (sub.demo || sub.razorpay_key_id === "demo_mode") { finish(sub.payment_ref); return; }
         await ensureRazorpay();
         const rzp = new window.Razorpay({
           key: sub.razorpay_key_id, subscription_id: sub.subscription_id,
@@ -111,7 +122,7 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
                 razorpay_signature: resp.razorpay_signature,
                 razorpay_subscription_id: resp.razorpay_subscription_id || sub.subscription_id,
               });
-              onSuccess?.(); onClose();
+              finish(sub.payment_ref || resp.razorpay_payment_id);
             } catch (e) { setError("Verification failed: " + e.message); setProcessing(false); }
           },
           theme: { color: "#d97706" }, modal: { ondismiss: () => setProcessing(false) },
@@ -125,7 +136,7 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
         kind: selected.kind, target_id: selected.id, coupon_code: couponCode,
       });
       // ₹0 after a 100%-off coupon → activated server-side, no gateway needed.
-      if (order.free) { onSuccess?.(); onClose(); return; }
+      if (order.free) { finish(order.payment_ref); return; }
       await ensureRazorpay();
       const rzp = new window.Razorpay({
         key: order.razorpay_key_id, amount: order.amount, currency: "INR",
@@ -138,7 +149,7 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
               razorpay_payment_id: resp.razorpay_payment_id,
               razorpay_signature: resp.razorpay_signature,
             });
-            onSuccess?.(); onClose();
+            finish(order.payment_ref || resp.razorpay_order_id);
           } catch (e) { setError("Verification failed: " + e.message); setProcessing(false); }
         },
         theme: { color: "#d97706" }, modal: { ondismiss: () => setProcessing(false) },
@@ -212,8 +223,49 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
           </div>
         )}
 
-        {/* Coupon */}
-        {selItem && (
+        {/* Auto-payment — monthly plans only; refills are one-time by nature. */}
+        {tab === "plans" && selItem && !selIsCurrent && (
+          <label
+            htmlFor="autopay-opt-in"
+            style={{
+              display: "flex", gap: 10, alignItems: "flex-start", marginTop: 14, padding: 12,
+              border: `1px solid ${autoPayOn ? "#d97706" : "var(--line)"}`, borderRadius: 10,
+              background: autoPayOn ? "rgba(217,119,6,0.06)" : "transparent",
+              cursor: autoPaySupported ? "pointer" : "not-allowed",
+              opacity: autoPaySupported ? 1 : 0.6,
+            }}
+          >
+            <input
+              id="autopay-opt-in"
+              type="checkbox"
+              checked={autoPayOn}
+              disabled={!autoPaySupported}
+              onChange={(e) => {
+                setAutoPay(e.target.checked);
+                // Coupons are applied to one-time orders only; a recurring
+                // mandate always charges the plan's list price.
+                if (e.target.checked) { setCouponInfo(null); setCouponErr(""); }
+              }}
+              style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
+            />
+            <span style={{ fontSize: 13 }}>
+              <strong>Enable auto-payment</strong>
+              <div style={{ color: "var(--ink-soft)", marginTop: 2 }}>
+                {autoPaySupported
+                  ? `Renew ${selItem.name} automatically every month at ₹${basePrice}. You can turn this off any time from Settings → Plan & Billing.`
+                  : "This plan isn't set up for auto-payment yet — you can pay once now and renew manually."}
+              </div>
+              {autoPayOn && (
+                <div style={{ color: "var(--ink-soft)", marginTop: 4, fontSize: 12 }}>
+                  Coupons apply to one-time payments only, so none is used here.
+                </div>
+              )}
+            </span>
+          </label>
+        )}
+
+        {/* Coupon — not applicable to a recurring mandate. */}
+        {selItem && !autoPayOn && (
           <div style={{ marginTop: 14 }}>
             <div style={{ display: "flex", gap: 8 }}>
               <input className="input" placeholder="Coupon code" value={coupon}
@@ -237,7 +289,7 @@ export default function SubscriptionModal({ onClose, onSuccess, initialTab = "pl
           {processing ? "Processing…" : selIsCurrent
             ? "✓ This is your current plan"
             : selItem
-            ? `Pay ₹${finalPrice}${couponInfo ? ` (was ₹${basePrice})` : ""} — ${tab === "plans" ? "Subscribe" : "Buy refill"}`
+            ? `Pay ₹${autoPayOn ? basePrice : finalPrice}${couponInfo && !autoPayOn ? ` (was ₹${basePrice})` : ""} — ${autoPayOn ? "Subscribe & auto-renew" : tab === "plans" ? "Subscribe" : "Buy refill"}`
             : "Select an option"}
         </button>
 

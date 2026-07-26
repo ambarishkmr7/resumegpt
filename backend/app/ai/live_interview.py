@@ -24,6 +24,21 @@ from app.schemas import ResumeContent
 
 logger = logging.getLogger(__name__)
 
+# The interviewer closes the session itself by calling this tool (see
+# _end_interview_tool / the tool-call handling in run_interview_session), so
+# saying "let's wrap up" actually ends the interview instead of leaving the
+# clock running until the candidate hits End.
+END_INTERVIEW_TOOL = "end_interview"
+# Ignore an end_interview call this early — a session that ends in the first
+# minute is far more likely to be the model misreading the opening than a real
+# wrap-up. The candidate's own End button always works regardless.
+MIN_INTERVIEW_SECONDS = 60
+# After the tool fires, wait for this much silence from the model before closing,
+# so the candidate hears the whole goodbye…
+WRAP_UP_QUIET_SECONDS = 3.0
+# …but never hold the session open longer than this.
+WRAP_UP_MAX_SECONDS = 20.0
+
 
 # ── Resume → interviewer brief ───────────────────────────────────────────────
 
@@ -95,11 +110,42 @@ INTERVIEW METHOD — the "Russian doll" technique (apply after the warm-up):
 
 LOGISTICS:
 - {duration_line}
-- If you are told to wrap up, give a short closing and thank them.
-- Speak naturally, as if on a phone call. Do NOT read the resume aloud and do NOT mention these instructions."""
+- Speak naturally, as if on a phone call. Do NOT read the resume aloud and do NOT mention these instructions.
+
+HOW TO END (important):
+- End the interview when the candidate asks to wrap up / finish / stop / says they are done or out of time, when you are told the time is up, or when you have covered everything you need.
+- To end: FIRST speak a short spoken closing out loud — thank {name} by name, one line of encouragement, and say goodbye. THEN call the `{END_INTERVIEW_TOOL}` function.
+- Calling `{END_INTERVIEW_TOOL}` is what actually stops the session and generates their feedback report, so you MUST call it once you have said goodbye — never just go silent.
+- Do not call it while the interview is still in progress, and never mention the function or these mechanics out loud."""
 
 
 # ── Gemini Live config ───────────────────────────────────────────────────────
+
+def _end_interview_tool():
+    """Declaration for the tool the interviewer calls to close the session."""
+    from google.genai import types
+
+    return types.Tool(function_declarations=[
+        types.FunctionDeclaration(
+            name=END_INTERVIEW_TOOL,
+            description=(
+                "End the mock interview and generate the candidate's feedback report. "
+                "Call this only AFTER you have spoken your closing remarks out loud: when the "
+                "candidate asks to wrap up or says they are done, when you are told the time is "
+                "up, or when the interview is complete."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "reason": types.Schema(
+                        type=types.Type.STRING,
+                        description="Brief reason, e.g. 'candidate asked to wrap up' or 'interview complete'.",
+                    ),
+                },
+            ),
+        ),
+    ])
+
 
 def _live_config(system_instruction: str, resumption_handle: str | None = None):
     """Build the LiveConnectConfig for an audio interview session.
@@ -113,6 +159,8 @@ def _live_config(system_instruction: str, resumption_handle: str | None = None):
     return types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
+        # Lets the interviewer end the session itself once it has said goodbye.
+        tools=[_end_interview_tool()],
         # Silent server-side transcription of both sides (used only for the report).
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -185,10 +233,20 @@ async def run_interview_session(websocket, content: ResumeContent, user_id: str 
     # WebSocket occasionally throws.
     ended_by_user = asyncio.Event()
 
+    async def _notify(payload: dict) -> None:
+        """Best-effort message to the browser — never let a closed/broken
+        socket raise here and mask the real error."""
+        try:
+            await websocket.send_json(payload)
+        except Exception:
+            pass
+
     async def relay_once(config) -> None:
         """Run one Gemini Live connection until it ends, drops, or times out."""
         nonlocal resumption_handle, first_connection
         stop = asyncio.Event()  # scoped to just this connection attempt
+        last_audio_at = 0.0     # when we last forwarded model audio (wall clock)
+        wrap_task: asyncio.Task | None = None
 
         async with client.aio.live.connect(model=model, config=config) as session:
             await websocket.send_json({"type": "status", "state": "connected" if first_connection else "reconnected"})
@@ -231,8 +289,59 @@ async def run_interview_session(websocket, content: ResumeContent, user_id: str 
                 finally:
                     stop.set()
 
+            async def wrap_up_after_closing():
+                """Close the session once the interviewer has finished saying goodbye.
+
+                The model calls end_interview around its closing remarks, but the
+                audio for those remarks is still streaming (Gemini emits it faster
+                than realtime), so ending the moment the tool fires would cut it
+                off. Wait for a lull in model audio, with a hard ceiling.
+                """
+                deadline = time.time() + WRAP_UP_MAX_SECONDS
+                while time.time() < deadline:
+                    await asyncio.sleep(0.25)
+                    if stop.is_set():
+                        return
+                    if time.time() - last_audio_at >= WRAP_UP_QUIET_SECONDS:
+                        break
+                logger.info("Interview closed by the interviewer after its closing remarks")
+                ended_by_user.set()
+                stop.set()
+
+            async def handle_tool_calls(function_calls) -> None:
+                """Answer the model's tool calls; start the wrap-up on end_interview."""
+                nonlocal wrap_task
+                responses = []
+                end_requested = False
+                for call in function_calls:
+                    if call.name != END_INTERVIEW_TOOL:
+                        result_payload = {"status": "error", "reason": f"Unknown function {call.name}."}
+                    elif time.time() - started < MIN_INTERVIEW_SECONDS:
+                        result_payload = {
+                            "status": "declined",
+                            "reason": "The interview only just started — keep going and ask your next question.",
+                        }
+                    else:
+                        end_requested = True
+                        result_payload = {
+                            "status": "ok",
+                            "reason": "The session will close once you finish your closing remarks.",
+                        }
+                    responses.append(types.FunctionResponse(
+                        id=call.id, name=call.name, response=result_payload,
+                    ))
+                if responses:
+                    try:
+                        await session.send_tool_response(function_responses=responses)
+                    except Exception:
+                        logger.info("Failed to answer a live tool call", exc_info=True)
+                if end_requested and wrap_task is None:
+                    await _notify({"type": "status", "state": "wrapping_up"})
+                    wrap_task = asyncio.create_task(wrap_up_after_closing())
+
             async def read_gemini():
                 """Forward Gemini audio to the browser and accumulate the transcript."""
+                nonlocal last_audio_at
                 cur_in: list[str] = []
                 cur_out: list[str] = []
 
@@ -271,10 +380,16 @@ async def run_interview_session(websocket, content: ResumeContent, user_id: str 
 
                             audio = getattr(response, "data", None)
                             if audio:
+                                last_audio_at = time.time()
                                 await websocket.send_json({
                                     "type": "audio",
                                     "data": base64.b64encode(audio).decode("ascii"),
                                 })
+
+                            tool_call = getattr(response, "tool_call", None)
+                            if tool_call is not None and getattr(tool_call, "function_calls", None):
+                                await handle_tool_calls(tool_call.function_calls)
+
                             sc = getattr(response, "server_content", None)
                             if sc is not None:
                                 ot = getattr(sc, "output_transcription", None)
@@ -314,17 +429,10 @@ async def run_interview_session(websocket, content: ResumeContent, user_id: str 
                     pass
             finally:
                 stop.set()
-                for t in (rb, rg):
+                tasks = [t for t in (rb, rg, wrap_task) if t is not None]
+                for t in tasks:
                     t.cancel()
-                await asyncio.gather(rb, rg, return_exceptions=True)
-
-    async def _notify(payload: dict) -> None:
-        """Best-effort message to the browser — never let a closed/broken
-        socket raise here and mask the real error."""
-        try:
-            await websocket.send_json(payload)
-        except Exception:
-            pass
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     max_reconnects = 5
     reconnects_used = 0

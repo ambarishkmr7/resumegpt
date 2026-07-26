@@ -10,3 +10,4 @@ dist/
 frontend/.env
 # OS
 .DS_Store
+*.pdf

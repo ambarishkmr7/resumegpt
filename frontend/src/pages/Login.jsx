@@ -16,7 +16,16 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set by the API client when a request 401s and the stored token is dropped.
+  const [expired, setExpired] = useState(false);
   const googleBtn = useRef(null);
+
+  useEffect(() => {
+    if (sessionStorage.getItem("session_expired")) {
+      setExpired(true);
+      sessionStorage.removeItem("session_expired");
+    }
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault(); setError(""); setBusy(true);
@@ -69,6 +78,9 @@ export default function Login() {
       <h2>Welcome back</h2>
       <h3>To avail Elite plan benefits you must be logged in...</h3>
       <p className="sub">Sign in to keep building.</p>
+      {expired && !error && (
+        <div className="error">Your session expired. Please sign in again.</div>
+      )}
       {error && <div className="error">{error}</div>}
 
       {GOOGLE_CLIENT_ID ? (
